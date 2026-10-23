@@ -1,0 +1,144 @@
+[gd_scene load_steps=16 format=3]
+
+[ext_resource type="Script" path="res://scripts/top_bar.gd" id="7_top"]
+[ext_resource type="Script" path="res://scripts/build_menu.gd" id="8_build"]
+[ext_resource type="Script" path="res://scripts/orders_ui.gd" id="5_orders"]
+[ext_resource type="Script" path="res://scripts/work_tab.gd" id="6_work"]
+[ext_resource type="Script" path="res://scripts/main.gd" id="0_main"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+[ext_resource type="Script" path="res://scripts/world.gd" id="1_world"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="2_cam"]
+[ext_resource type="Script" path="res://scripts/day_night.gd" id="9_day"]
+[ext_resource type="Script" path="res://scripts/menu.gd" id="10_menu"]
+[ext_resource type="Script" path="res://scripts/station_ui.gd" id="11_station"]
+[ext_resource type="Script" path="res://scripts/input_ctrl.gd" id="3_input"]
+
+[sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
+sky_top_color = Color(0.28, 0.52, 0.9, 1)
+sky_horizon_color = Color(0.7, 0.84, 0.95, 1)
+ground_bottom_color = Color(0.45, 0.6, 0.8, 1)
+ground_horizon_color = Color(0.7, 0.84, 0.95, 1)
+
+[sub_resource type="Sky" id="sky"]
+sky_material = SubResource("sky_mat")
+
+[sub_resource type="Environment" id="env"]
+background_mode = 2
+sky = SubResource("sky")
+ambient_light_source = 2
+ambient_light_color = Color(0.78, 0.8, 0.86, 1)
+ambient_light_energy = 0.55
+tonemap_mode = 2
+ssao_enabled = true
+glow_enabled = true
+glow_intensity = 0.3
+fog_enabled = true
+fog_light_color = Color(0.72, 0.84, 0.95, 1)
+fog_mode = 1
+fog_density = 1.0
+fog_sky_affect = 0.0
+fog_depth_begin = 75.0
+fog_depth_end = 135.0
+
+[node name="Main" type="Node3D"]
+script = ExtResource("0_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("env")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.383, 0.3214, 0, 0.6428, 0.766, -0.5, -0.6634, 0.5567, 0, 30, 0)
+light_color = Color(1, 0.95, 0.85, 1)
+light_energy = 1.6
+shadow_enabled = true
+script = ExtResource("9_day")
+
+[node name="World" type="Node3D" parent="."]
+script = ExtResource("1_world")
+
+[node name="CameraRig" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 32, 16, 32)
+script = ExtResource("2_cam")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+
+[node name="Workers" type="Node3D" parent="."]
+
+[node name="Input" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3_input")
+
+[node name="HUD" type="Label" parent="."]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -600.0
+offset_top = -90.0
+offset_right = 600.0
+offset_bottom = -12.0
+grow_horizontal = 2
+grow_vertical = 0
+horizontal_alignment = 1
+vertical_alignment = 2
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 6
+script = ExtResource("4_hud")
+
+[node name="TopBar" type="PanelContainer" parent="."]
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 40.0
+grow_horizontal = 1
+script = ExtResource("7_top")
+
+[node name="BuildMenu" type="PanelContainer" parent="."]
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_top = 48.0
+offset_bottom = -100.0
+grow_vertical = 2
+script = ExtResource("8_build")
+
+[node name="OrdersPanel" type="PanelContainer" parent="."]
+offset_left = 16.0
+offset_top = 50.0
+
+[node name="Orders" type="VBoxContainer" parent="OrdersPanel"]
+script = ExtResource("5_orders")
+
+[node name="WorkTab" type="PanelContainer" parent="."]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_top = 50.0
+grow_horizontal = 2
+script = ExtResource("6_work")
+
+[node name="StationPanel" type="PanelContainer" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -460.0
+offset_top = 50.0
+offset_right = -16.0
+grow_horizontal = 0
+script = ExtResource("11_station")
+
+[node name="PauseMenu" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("10_menu")
+in_game = true
