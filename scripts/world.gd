@@ -560,7 +560,8 @@ func _water_mesh(c: Vector2i, s: int) -> MeshInstance3D:
 				var flow := Color(0.5, 0.5, 1.0 if t == FALLING else 0.0)  # see _water_flow
 				var corners := {}  # Vector2i(0..1, 0..1) -> height
 				if inner and t == WATER and _still_surface(data, i):
-					corners = STILL_CORNERS  # lake / sea: flat, no current
+					corners = STILL_CORNERS  # lake / sea / river: flat
+					flow = _river_color(p)
 				for k in 6:
 					var nb: int = data[i + N_OFF[k]] if inner else get_block(p + VoxelMesh.DIRS[k])
 					if nb != AIR:
@@ -633,9 +634,15 @@ func _water_flow(p: Vector3i, t: int, heights: Dictionary) -> Color:
 		elif tq == AIR and not is_solid(q + Vector3i.DOWN):
 			v += Vector2(d.x, d.z) * h  # spills over the edge
 	if t == WATER and v.length() < 0.3:
-		return Color(0.5, 0.5, 0.0)  # still pond
+		return _river_color(p)  # still water, unless a river runs here
 	v = v.normalized() if v.length() > 0.001 else Vector2.ZERO
 	return Color(0.5 + v.x * 0.5, 0.5 + v.y * 0.5, 0.0)
+
+
+# A river's current (WorldGen.river_flow) as a flow color; still otherwise.
+func _river_color(p: Vector3i) -> Color:
+	var f := gen.river_flow(p.x, p.z)
+	return Color(0.5 + f.x * 0.5, 0.5 + f.y * 0.5, 0.0)
 
 
 # Rebuilds only the water of section s (the terrain didn't change).

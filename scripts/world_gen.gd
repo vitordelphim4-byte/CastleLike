@@ -4,6 +4,7 @@ class_name WorldGen
 ## Layers: continents (lake basins / lowlands / highlands) + hills whose roughness varies + ridged
 ## mountains (more of them in highlands) + rivers along the "zero line" of a noise + lakes
 ## (everything below WATER_LEVEL fills with water). Temperature x moisture pick the biome.
+## Rivers run downhill to the sea: streams up high, wide rivers near the coast (river()).
 ## Shapes are domain-warped so coasts and ranges aren't noise-blob round.
 ## Underground (Phase 10): bedrock, deepslate, ore veins, "spaghetti" tunnels (air where two 3D
 ## noises are both near zero) and "cheese" halls (a low-frequency 3D noise over a limit), as in
@@ -39,6 +40,14 @@ const RAVINE_WIDTH := 0.022  # |line noise| under this at the top (about 4-6 blo
 const RAVINE_DEPTH := 55  # deepest a ravine goes, mid-mask
 const OPEN_CLEAR := START_RADIUS + 16.0  # no mouths or ravines this close to the spawn
 const MOUTH_DEPTH := 24  # how deep the game shows the caves around a cave mouth
+const RIVER_BAND_WIDE := 0.075  # river noise half-band near the sea (wide rivers)...
+const RIVER_BAND_NARROW := 0.02  # ...and up high (streams)
+const RIVER_HIGH := 12.0  # blocks over the sea where rivers are fully stream-like
+const RIVER_DEPTH_SEA := 3.0  # water depth near the sea...
+const RIVER_DEPTH_HIGH := 1.0  # ...and up high
+const RIVER_SMOOTH := 16  # blocks the land is blurred over for the water surface
+const RIVER_BELOW := 2  # water surface this far under the blurred land
+const RIVER_WET := 0.35  # bed cut deep enough here to hold river water
 const VEINS := {
 	World.COAL_ORE: {"count": 7, "size": [5, 12], "depth": [3, 40]},
 	World.IRON_ORE: {"count": 4, "size": [3, 7], "depth": [6, 999]},
@@ -63,6 +72,7 @@ var rivers := FastNoiseLite.new()
 var temperature := FastNoiseLite.new()
 var moisture := FastNoiseLite.new()
 var iron := FastNoiseLite.new()
+var _flow_cache := {}  # Vector2i -> Vector2 (river_flow)
 var cave_a := FastNoiseLite.new()  # spaghetti tunnels: where both are near zero
 var cave_b := FastNoiseLite.new()
 var cave_hall := FastNoiseLite.new()  # cheese halls: where it's high
@@ -109,8 +119,15 @@ func height(x: int, z: int) -> float:
 	return lerpf(_spawn_h, _raw_height(x, z), away)
 
 
-# Height before the spawn area is flattened.
+# Height before the spawn area is flattened: the land, with river beds cut into it.
 func _raw_height(x: int, z: int) -> float:
+	var land := _land(x, z)
+	var r := river(x, z, land)
+	return land if r.x <= 0.0 else lerpf(land, r.y - r.z, r.x)
+
+
+# Height of the land, without rivers.
+func _land(x: int, z: int) -> float:
 	var wx := x + warp.get_noise_2d(x, z) * WARP
 	var wz := z + warp.get_noise_2d(z + 7919, x - 3571) * WARP
 	var c := continent.get_noise_2d(wx, wz)
@@ -119,9 +136,53 @@ func _raw_height(x: int, z: int) -> float:
 	h += plains.get_noise_2d(x, z) * hills
 	var m := _mountains(wx, wz, c)
 	h += m * pow((ridges.get_noise_2d(x, z) + 1.0) * 0.5, 1.4) * MOUNTAIN_HEIGHT  # pow: steep peaks, gentle foothills
-	# River valleys: where the river noise crosses zero, outside mountains.
-	var carve := (1.0 - smoothstep(0.02, 0.07, absf(rivers.get_noise_2d(wx, wz)))) * (1.0 - m)
-	return lerpf(h, WATER_LEVEL - 2.5, carve)
+	return h
+
+
+# Rivers (Phase 10e4) run along the zero line of a noise, outside mountains. Their water surface
+# follows the land around them (a blurred height, a little under it, never under the sea), so they
+# go downhill to the sea in 1-block steps. High up they're narrow, shallow streams; near the sea,
+# wide and deep rivers. Returns (how much the bed is cut here 0..1, water surface y, depth), or
+# ZERO away from rivers. `land` = _land(x, z) when the caller has it.
+func river(x: int, z: int, land := NAN) -> Vector3:
+	var wx := x + warp.get_noise_2d(x, z) * WARP
+	var wz := z + warp.get_noise_2d(z + 7919, x - 3571) * WARP
+	var n := absf(rivers.get_noise_2d(wx, wz))
+	if n >= RIVER_BAND_WIDE:
+		return Vector3.ZERO
+	var m := _mountains(wx, wz, continent.get_noise_2d(wx, wz))
+	if m >= 1.0:
+		return Vector3.ZERO
+	if is_nan(land):
+		land = _land(x, z)
+	var s := maxf(WATER_LEVEL, minf(floorf(_river_level(x, z)) - RIVER_BELOW, floorf(land) - 1.0))
+	var high := clampf((s - WATER_LEVEL) / RIVER_HIGH, 0.0, 1.0)  # 0 at sea level .. 1 up high
+	var band := lerpf(RIVER_BAND_WIDE, RIVER_BAND_NARROW, high)
+	var carve := (1.0 - smoothstep(band * 0.4, band, n)) * (1.0 - m)
+	return Vector3(carve, s, lerpf(RIVER_DEPTH_SEA, RIVER_DEPTH_HIGH, high)) if carve > 0.0 else Vector3.ZERO
+
+
+# The land blurred over RIVER_SMOOTH blocks: what a river's surface follows.
+func _river_level(x: int, z: int) -> float:
+	var d := RIVER_SMOOTH
+	return (_land(x + d, z + d) + _land(x - d, z + d) + _land(x + d, z - d) + _land(x - d, z - d)) / 4.0
+
+
+# Which way the river at (x, z) runs (downhill along the blurred land), ZERO if no river here.
+# Cached: the water mesh asks for every river surface cell.
+func river_flow(x: int, z: int) -> Vector2:
+	var key := Vector2i(x, z)
+	if _flow_cache.has(key):
+		return _flow_cache[key]
+	var f := Vector2.ZERO
+	if river(x, z).x > RIVER_WET:
+		var g := Vector2(_river_level(x + 4, z) - _river_level(x - 4, z), _river_level(x, z + 4) - _river_level(x, z - 4))
+		if g.length() > 0.05:
+			f = -g.normalized()
+	if _flow_cache.size() > 100000:
+		_flow_cache.clear()
+	_flow_cache[key] = f
+	return f
 
 
 func _mountains(wx: float, wz: float, c: float) -> float:
@@ -212,6 +273,9 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 			var k := (lx + 1) + (size + 2) * (lz + 1)
 			var top := clampi(int(hs[k]), 1, sy - 3)
 			tops[lx + size * lz] = top
+			# River water over this spot (its surface y), away from the start area; -1 = none.
+			var r := river(wx, wz) if not flat else Vector3.ZERO
+			var river_top := int(r.y) if r.x > RIVER_WET and top < r.y and Vector2(wx - spawn.x, wz - spawn.y).length() > START_RADIUS else -1
 			var steep := maxf(maxf(absf(hs[k] - hs[k - 1]), absf(hs[k] - hs[k + 1])),
 				maxf(absf(hs[k] - hs[k - size - 2]), absf(hs[k] - hs[k + size + 2]))) > 2.5
 			var b := biome(wx, wz, top)
@@ -231,12 +295,14 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 					sub = World.STONE
 			if steep and surf == World.GRASS:
 				surf = World.STONE
+			if river_top >= 0:
+				surf = World.SAND  # river bed
 			# Underground, bottom up: bedrock, deepslate (wavy top), stone, then the biome's soil.
 			var hc := hash(Vector3i(wx, wz, world_seed))
 			var bedrock := hc % BEDROCK_MAX
 			var deep := DEEP_TOP + (hc >> 8) % 7 - 3
-			for r: Vector2i in bands + [Vector2i(lo, top + 1)]:
-				for y in range(r.x, r.y):
+			for span: Vector2i in bands + [Vector2i(lo, top + 1)]:
+				for y in range(span.x, span.y):
 					_fill(blocks, lx + size * (lz + size * y), y, top, surf, sub, bedrock, deep)
 			# Iron veins in stone near the surface (they show on mountain faces and cliffs).
 			for y in range(maxi(1, top - ORE_DEPTH), top + 1):
@@ -244,7 +310,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 				if blocks[i] == World.STONE and iron.get_noise_3d(wx, y * 1.4, wz) > IRON_THRESHOLD:
 					blocks[i] = World.IRON_ORE
 			if not flat:  # the debug plain sits below water level and must stay dry
-				for y in range(top + 1, WATER_LEVEL + 1):
+				for y in range(top + 1, maxi(WATER_LEVEL, river_top) + 1):
 					blocks[lx + size * (lz + size * y)] = World.WATER
 	# How deep under the ground this column is open to the sky (cave mouth / ravine; 0 = closed):
 	# the game shows the caves down to there.
@@ -260,7 +326,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 
 # Entrances and ravines stay off water, beaches and the colony's start area.
 func _can_open(wx: int, wz: int, top: int) -> bool:
-	return top > WATER_LEVEL + 1 and Vector2(wx - spawn.x, wz - spawn.y).length() > OPEN_CLEAR
+	return top > WATER_LEVEL + 1 and Vector2(wx - spawn.x, wz - spawn.y).length() > OPEN_CLEAR and river(wx, wz).x <= 0.0
 
 
 # Ravines: narrow, deep cracks along the zero line of a noise (like rivers), only where a rare mask

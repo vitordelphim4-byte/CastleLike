@@ -141,6 +141,19 @@ func _initialize() -> void:
 		elif args[2] == "hill_cave":
 			panel._cut(6)
 		view_spot = rig.position
+	if args.size() > 2 and args[2] in ["river_high", "river_low"]:  # nearest stream up high / river at sea level (10e4)
+		var g: WorldGen = game.world.gen
+		var best := INF
+		for x in range(home.x - 300, home.x + 301, 3):
+			for z in range(home.y - 300, home.y + 301, 3):
+				var d := Vector2(x - home.x, z - home.y).length()
+				if d >= best or d < 40:
+					continue
+				var r := g.river(x, z)
+				var high := r.y > WorldGen.WATER_LEVEL + 8
+				if r.x > 0.8 and high == (args[2] == "river_high") and (high or r.y == WorldGen.WATER_LEVEL):
+					best = d
+					view_spot = Vector3(x, 0, z)
 	if args.size() > 2 and args[2] == "mouth":  # nearest cave mouth / ravine to the spawn (Phase 10d)
 		var g: WorldGen = game.world.gen
 		var hc := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)

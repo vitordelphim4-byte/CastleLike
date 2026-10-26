@@ -273,11 +273,20 @@ Regras (Minecraft, menos a fonte infinita):
   em ~1 s).
 - Animais andam na água rasa na velocidade normal (ponytail: mais lento quando importar).
 
-#### 10e4 — Rios com correnteza
-- Refazer os rios: nascem nas serras e descem em degraus até lagos e mar, com água corrente no
-  canal e fontes na nascente.
-- São gerados já em equilíbrio, então não custam simulação até alguém mexer neles.
-- **?** Largura e frequência dos rios novos.
+#### 10e4 — Rios com correnteza ✅ (feito 2026-10-26)
+- Decidido: rios mistos, riachos estreitos no alto que alargam até rios largos no nível do mar.
+- `WorldGen.river(x, z)`: os rios seguem a linha zero de um ruído (fora das montanhas). O nível da
+  água acompanha o terreno em volta (média num raio de 16 blocos, 2 abaixo dela, nunca abaixo do
+  mar), então o rio desce até o mar em degraus de 1 bloco (corredeiras). Largura e profundidade
+  pela altitude: riacho de ~3–4 blocos e 1 de fundo a partir de 12 blocos acima do mar; rio de
+  ~11–15 blocos e 3 de fundo no nível do mar. Leito de areia.
+- Correnteza: `river_flow` (ladeira abaixo da média, com cache) vai no vértice. Os rios são gerados
+  como fontes paradas, então custam zero de simulação até alguém mexer, mas mostram a correnteza.
+- Sem rio na área inicial. Ravinas e bocas de caverna não cortam rios.
+- Visualizador: a camada 7 "Rios" mostra os rios novos.
+- Teste: `test_rivers.gd` (3 seeds: riacho ≤ 5 de largura, rio no nível do mar ≥ 5, riachos com
+  correnteza, água fora do leito < 20% da superfície — são os degraus —, nada na área inicial).
+- Custo: geração 8,5 ms e explorar 95 ms por coluna, como antes.
 
 #### 10e5 — Lagos subterrâneos (aquíferos)
 - Bolsões de água parada em cavernas e salões, com nível próprio por região, como os aquíferos do

@@ -141,7 +141,7 @@ func _color(x: int, z: int) -> Color:
 		3: return _signed(gen.moisture.get_noise_2d(x, z), Color(0.8, 0.6, 0.3), Color(0.1, 0.5, 0.9))
 		4: return _signed(gen.continent.get_noise_2d(x, z), Color(0.1, 0.2, 0.6), Color(0.6, 0.5, 0.3))
 		5: return Color.BLACK.lerp(Color.WHITE, gen._mountains(x, z, gen.continent.get_noise_2d(x, z)))
-		_: return Color.BLACK.lerp(Color(0.3, 0.6, 1), 1.0 - smoothstep(0.02, 0.07, absf(gen.rivers.get_noise_2d(x, z))))
+		_: return Color.BLACK.lerp(Color(0.3, 0.6, 1), gen.river(x, z).x)
 
 
 func _signed(v: float, neg: Color, pos: Color) -> Color:
