@@ -6,7 +6,7 @@ extends SceneTree
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var out := args[0] if args.size() > 0 else "user://shot.png"
-	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof", "xray", "hill", "hill_cut", "hill_cave", "tower", "tower0", "tower1", "tower_low", "water"] else "res://main.tscn"
+	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof", "xray", "hill", "hill_cut", "hill_cave", "tower", "tower0", "tower1", "tower_low", "water", "water_close"] else "res://main.tscn"
 	var game := root.get_node("Game")
 	if args.size() > 4:
 		game.start_seed = int(args[4])
@@ -109,6 +109,14 @@ func _initialize() -> void:
 							view_spot = Vector3((x + wx) / 2.0, 0, (z + wz) / 2.0)
 		if view_spot == null:
 			view_spot = game.stockpile
+	if args.size() > 2 and args[2] == "water_close":  # close, low look at the lab's waterfall off the mesa
+		for n in root.get_node("Main").get_children():
+			if n.has_method("_go_lab"):
+				n._water("mesa_edge")
+				game.world.fluids.speed = 10.0
+				var o: Vector3i = root.get_node("Main").water_lab.origin
+				view_spot = Vector3(o.x + 2.5, 0, o.z + 9)
+				rig.rotation.y = 0.5
 	if args.size() > 2 and args[2] == "water":  # debug water lab, every scenario started (Phase 10e)
 		for n in root.get_node("Main").get_children():
 			if n.has_method("_go_lab"):

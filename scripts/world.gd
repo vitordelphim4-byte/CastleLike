@@ -54,7 +54,7 @@ const WADE_COST := 3.0  # A* weight of a shallow-water cell: paths go around whe
 # Lake / sea surface shortcut (_still_surface): the 8 cells around (and the cell itself), and the
 # corners every such cell gets.
 const STILL_OFF := [0, 1, -1, CHUNK, -CHUNK, CHUNK + 1, CHUNK - 1, -CHUNK + 1, -CHUNK - 1]
-const STILL_CORNERS := {Vector2i(0, 0): 0.88, Vector2i(1, 0): 0.88, Vector2i(0, 1): 0.88, Vector2i(1, 1): 0.88}
+const STILL_CORNERS := {Vector2i(0, 0): 8.0 / 9.0, Vector2i(1, 0): 8.0 / 9.0, Vector2i(0, 1): 8.0 / 9.0, Vector2i(1, 1): 8.0 / 9.0}
 
 @export var flat := false  # debug map: endless flat plain
 @export var world_seed := 0  # 0 = random each run
@@ -598,36 +598,48 @@ func _still_surface(data: PackedByteArray, i: int) -> bool:
 func _water_height(t: int, p: Vector3i) -> float:
 	if t == FALLING or is_water(get_block(p + Vector3i.UP)):
 		return 1.0
-	return 0.88 if t == WATER else 0.1 + 0.11 * water_level(t)
+	return 8.0 / 9.0 if t == WATER else water_level(t) / 9.0  # Minecraft: source 8/9, flowing level/9
 
 
-# Height of the surface at corner (a, b) of cell p (Minecraft style): the average of the water
-# cells sharing that corner, or the full block if any of them has water on top (a falling column).
-# Neighbors share corners, so the surface slopes between levels with no steps or gaps.
+# Height of the surface at corner (a, b) of cell p, Minecraft's rule: over the 4 cells sharing the
+# corner, the full block if any has water on top (a falling column); else the weighted average of
+# their water depth, where sources and falling water count 11 times, flowing water once, and an
+# open (air) cell counts once as empty. So the surface slopes down to an edge and drapes over it
+# (smooth falls), and neighbors share corners: no steps or gaps. Solid cells don't count.
 func _corner_height(p: Vector3i, a: int, b: int, heights: Dictionary) -> float:
-	var sum := 0.0
+	var depth := 0.0
 	var n := 0
 	for dx in [a - 1, a]:
 		for dz in [b - 1, b]:
 			var q := p + Vector3i(dx, 0, dz)
 			if not heights.has(q):
 				var t := get_block(q)
-				heights[q] = _water_height(t, q) if is_water(t) else -1.0
+				if is_water(t):
+					heights[q] = _water_height(t, q) + (10.0 if t == WATER or t == FALLING else 0.0)  # +10: heavy
+				else:
+					heights[q] = -1.0 if is_solid(q) else -2.0  # -2: open air
 			var h: float = heights[q]
+			if h == -1.0:
+				continue
+			if h == -2.0:
+				depth += 1.0
+				n += 1
+				continue
+			var heavy := h >= 10.0
+			h -= 10.0 if heavy else 0.0
 			if h >= 1.0:
 				return 1.0
-			if h >= 0.0:
-				sum += h
-				n += 1
-	return sum / n
+			depth += (1.0 - h) * (11 if heavy else 1)
+			n += 11 if heavy else 1
+	return 1.0 - depth / n
 
 
 # Which way p's water runs, packed in a vertex color for the shader: r, g = x, z direction
 # (0.5 = none), b = 1 for a falling column. Downhill toward lower water and toward drops at the edge.
-func _water_flow(p: Vector3i, t: int, heights: Dictionary) -> Color:
+func _water_flow(p: Vector3i, t: int, _heights: Dictionary) -> Color:
 	if t == FALLING:
 		return Color(0.5, 0.5, 1.0)
-	var h: float = heights.get(p, _water_height(t, p))
+	var h := _water_height(t, p)
 	var v := Vector2.ZERO
 	for d in H_DIRS:
 		var q := p + d

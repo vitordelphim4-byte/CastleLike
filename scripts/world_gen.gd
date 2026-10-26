@@ -48,6 +48,10 @@ const RIVER_DEPTH_HIGH := 1.0  # ...and up high
 const RIVER_SMOOTH := 16  # blocks the land is blurred over for the water surface
 const RIVER_BELOW := 2  # water surface this far under the blurred land
 const RIVER_WET := 0.35  # bed cut deep enough here to hold river water
+# Ground checked around a river spot so its water stays below every bank (see _river).
+const BANK_RING: Array[Vector2i] = [Vector2i(2, 0), Vector2i(-2, 0), Vector2i(0, 2), Vector2i(0, -2),
+	Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2), Vector2i(-2, -2), Vector2i(1, 0), Vector2i(-1, 0),
+	Vector2i(0, 1), Vector2i(0, -1)]
 const RIVER_TERRACE := 7.0  # river surface steps above the sea: a waterfall at each step
 const CAVE_FALL_CHANCE := 0.12  # per column: a spring in the roof of a tall hall
 const CAVE_FALL_MIN := 6  # air under the roof for a cave waterfall
@@ -176,7 +180,12 @@ func _river(x: int, z: int, land: float) -> Vector4:
 	var level := raw
 	if level > WATER_LEVEL + RIVER_TERRACE:
 		level = WATER_LEVEL + floorf((level - WATER_LEVEL) / RIVER_TERRACE) * RIVER_TERRACE
-	var s := maxf(WATER_LEVEL, minf(level, floorf(land) - 1.0))
+	# Never above the lowest ground around (RIVER_BANK blocks): on a slope the river cuts a channel
+	# into it instead of hanging off it in loose steps.
+	var low := land
+	for d: Vector2i in BANK_RING:
+		low = minf(low, _land(x + d.x, z + d.y))
+	var s := maxf(WATER_LEVEL, minf(level, floorf(low) - 1.0))
 	var high := clampf((s - WATER_LEVEL) / RIVER_HIGH, 0.0, 1.0)  # 0 at sea level .. 1 up high
 	var band := lerpf(RIVER_BAND_WIDE, RIVER_BAND_NARROW, high)
 	var carve := (1.0 - smoothstep(band * 0.4, band, n)) * (1.0 - m)
@@ -284,6 +293,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 		blocks.append_array(layer)
 	blocks.resize(size * size * sy)
 	var bands := [Vector2i(0, mini(BEDROCK_MAX, lo)), Vector2i(clampi(DEEP_TOP - 3, 0, lo), clampi(DEEP_TOP + 3, 0, lo))]
+	var wet_top := -1  # highest river water placed (the drain pass looks up to there)
 	var trees: Array[Dictionary] = []
 	var tops := PackedInt32Array()
 	tops.resize(size * size)
@@ -296,7 +306,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 			tops[lx + size * lz] = top
 			# River water over this spot (its surface y), away from the start area; -1 = none.
 			var r := river(wx, wz) if not flat else Vector4.ZERO
-			var river_top := int(r.y) if r.x > RIVER_WET and top < r.y and Vector2(wx - spawn.x, wz - spawn.y).length() > START_RADIUS else -1
+			var river_top := int(r.y) if r.x > 0.0 and top < r.y and Vector2(wx - spawn.x, wz - spawn.y).length() > START_RADIUS else -1
 			var steep := maxf(maxf(absf(hs[k] - hs[k - 1]), absf(hs[k] - hs[k + 1])),
 				maxf(absf(hs[k] - hs[k - size - 2]), absf(hs[k] - hs[k + size + 2]))) > 2.5
 			var b := biome(wx, wz, top)
@@ -335,6 +345,9 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 					blocks[lx + size * (lz + size * y)] = World.WATER
 				if river_top >= 0:
 					_river_fall(blocks, wx, wz, lx + size * lz, size * size, river_top, r.w)
+					wet_top = maxi(wet_top, river_top)
+	if wet_top > WATER_LEVEL:
+		_drain_rivers(blocks, cx, cz, size, hs, wet_top)
 	# How deep under the ground this column is open to the sky (cave mouth / ravine; 0 = closed):
 	# the game shows the caves down to there.
 	var open_depth := 0
@@ -350,6 +363,54 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth, "springs": springs}
 
 
+# River water must sit in its bed: river sources above the sea with air beside or under them are
+# taken out, again and again until none is left (taking one out can open its neighbor). Spots in
+# the next columns are judged from their height and river (hs has a 1-block border).
+func _drain_rivers(blocks: PackedByteArray, cx: int, cz: int, size: int, hs: PackedFloat32Array, wet_top: int) -> void:
+	var area := size * size
+	var changed := true
+	while changed:
+		changed = false
+		for y in range(wet_top, WATER_LEVEL, -1):
+			for lz in size:
+				for lx in size:
+					var i := lx + size * lz + area * y
+					var t := blocks[i]
+					if t == World.FALLING:  # a waterfall needs water above it
+						if not World.is_water(blocks[i + area]):
+							blocks[i] = World.AIR
+							changed = true
+						continue
+					if t != World.WATER and t != World.FLOW_7:
+						continue
+					# A source must be held on every side and below; a fall's top (flowing 7) must
+					# have a source beside it feeding it.
+					var dry := t == World.WATER and blocks[i - area] == World.AIR
+					var fed := false
+					for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+						if dry:
+							break
+						var nx := lx + d.x
+						var nz := lz + d.y
+						var nb := World.AIR
+						if nx >= 0 and nz >= 0 and nx < size and nz < size:
+							nb = blocks[nx + size * nz + area * y]
+						else:  # next column: ground, river water, or air?
+							var top := int(hs[(nx + 1) + (size + 2) * (nz + 1)])
+							var rn := river(cx * size + nx, cz * size + nz)
+							if y <= top:
+								nb = World.STONE
+							elif rn.x > 0.0 and top < rn.y and y <= rn.y:
+								nb = World.WATER
+						fed = fed or nb == World.WATER
+						dry = t == World.WATER and nb == World.AIR
+					if t == World.FLOW_7:
+						dry = not fed
+					if dry:
+						blocks[i] = World.AIR
+						changed = true
+
+
 # River waterfall: a river spot right below a higher stretch of the same river gets the falling
 # water, from its own surface up to the stretch above (flowing 7 on top, as Minecraft would leave it).
 func _river_fall(blocks: PackedByteArray, wx: int, wz: int, i: int, area: int, surface: int, raw: float) -> void:
@@ -359,7 +420,7 @@ func _river_fall(blocks: PackedByteArray, wx: int, wz: int, i: int, area: int, s
 	var up := surface
 	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		var r := river(wx + d.x, wz + d.y)
-		if r.x > RIVER_WET and r.y > up:
+		if r.x > 0.0 and r.y > up and height(wx + d.x, wz + d.y) < r.y:  # that stretch really holds water here
 			up = int(r.y)
 	if up <= surface + 1:
 		return

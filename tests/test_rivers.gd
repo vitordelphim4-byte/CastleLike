@@ -38,7 +38,7 @@ func _initialize() -> void:
 			return _fail("seed %d: only %d of %d stream spots have a current" % [sd, flowing, high_n])
 		var open := _open_sides(g)
 		print("  river surface open to the air on a side: %.1f%%" % (open * 100.0))
-		if open > 0.2:
+		if open > 0.03:
 			return _fail("seed %d: river water spilling out of its bed (%.0f%%)" % [sd, open * 100.0])
 	var g := WorldGen.new(1000)
 	var home := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)

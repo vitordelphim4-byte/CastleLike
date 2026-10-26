@@ -32,9 +32,9 @@ void fragment() {
 		float across = dot(wpos.xz, vec2(-dir.y, dir.x));
 		streak = smoothstep(0.7, 1.0, sin(along * 5.0 - TIME * 5.0 + sin(across * 2.7) * 2.0)) * 0.2;
 	}
-	vec3 base = vec3(0.1, 0.36, 0.66);
-	ALBEDO = mix(base, vec3(0.75, 0.88, 1.0), streak) * mix(0.3, 1.0, daylight);
-	ALPHA = 0.74 + streak * 0.2;
-	ROUGHNESS = 0.08;
-	SPECULAR = 0.7;
+	vec3 base = vec3(0.07, 0.2, 0.7);  // Minecraft-like blue, strong even when shallow
+	ALBEDO = mix(base, vec3(0.45, 0.6, 0.95), streak) * mix(0.3, 1.0, daylight);
+	ALPHA = 0.86 + streak * 0.1;
+	ROUGHNESS = 0.18;
+	SPECULAR = 0.4;
 }

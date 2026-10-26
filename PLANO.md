@@ -302,6 +302,18 @@ Regras (Minecraft, menos a fonte infinita):
 - Testes: `test_rivers.gd` (queda de rio de 4+ blocos perto do início, cachoeira de caverna caindo
   6+ blocos e se espalhando no chão).
 
+#### 10e4c — Água como no Minecraft (ajustes de 2026-10-26)
+- Superfície com a regra de cantos do Minecraft: o ar vizinho conta como vazio e fontes ou água
+  caindo pesam 11x. A água desce em rampa até a borda e "escorre" pelas quedas (quedas suaves).
+  Alturas: fonte 8/9, corrente nível/9.
+- Cor mais azul e menos transparente (azul forte mesmo rasa), menos reflexo.
+- Rios em encosta (erro achado no jogo: blocos soltos de água em degraus pela montanha):
+  - o nível do rio fica abaixo do terreno mais baixo num raio de 2 blocos, então o rio cava um
+    canal na encosta;
+  - depois de encher, uma drenagem tira repetidamente toda fonte de rio acima do mar com ar ao lado
+    ou embaixo, e colunas de queda sem água alimentando.
+  - Água exposta ao ar caiu de 10–16% para 0–0,3%. `test_rivers` agora exige < 3%.
+
 #### 10e5 — Lagos subterrâneos (aquíferos)
 - Bolsões de água parada em cavernas e salões, com nível próprio por região, como os aquíferos do
   Minecraft.
