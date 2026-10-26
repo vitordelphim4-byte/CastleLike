@@ -8,10 +8,13 @@ signal mode_changed
 
 # Work types, in work-tab column order (= tie-break order at equal priority, like RimWorld).
 # To add a job (soldier, archer, hunter...): add it here and teach Worker._find_work() to find its jobs.
-const WORKS := {"build": "Construção", "dig": "Mineração", "wood": "Lenhador", "craft": "Artesão"}
+const WORKS := {"build": "Construção", "dig": "Mineração", "wood": "Lenhador", "farm": "Agricultor", "gather": "Coletor",
+	"hunt": "Caçador", "craft": "Artesão"}
 # Area kinds the player marks; "stock" = stockpile zone (the others are standing orders).
-const ORDER_NAMES := {"wood": "Cortar árvores", "dig": "Escavar", "stock": "Estoque"}
-const ORDER_COLORS := {"wood": Color(0.45, 0.95, 0.3), "dig": Color(1, 0.45, 0.1), "stock": Color(0.95, 0.8, 0.3)}
+const ORDER_NAMES := {"wood": "Cortar árvores", "gather": "Colher frutas", "hunt": "Caçar", "dig": "Escavar",
+	"stock": "Estoque", "farm": "Plantação"}
+const ORDER_COLORS := {"wood": Color(0.45, 0.95, 0.3), "gather": Color(1, 0.45, 0.65), "dig": Color(1, 0.45, 0.1),
+	"stock": Color(0.95, 0.8, 0.3), "farm": Color(0.6, 0.9, 0.35), "hunt": Color(0.9, 0.3, 0.25)}
 const PAUSED_COLOR := Color(0.6, 0.6, 0.6)
 const DIG_COLOR := Color(1, 0.45, 0.1, 0.35)
 # Classic blueprint blue (by material, stone a bit deeper); red for demolition marks.
@@ -25,16 +28,25 @@ const RESOURCES := {
 	"iron_ore": {"name": "minério de ferro", "per_tile": 18},
 	"charcoal": {"name": "carvão", "per_tile": 18},
 	"iron": {"name": "barra de ferro", "per_tile": 20},
+	"berries": {"name": "frutas silvestres", "per_tile": 12, "food": 0.2},  # food: hunger filled per unit
+	"wheat": {"name": "trigo", "per_tile": 15, "food": 0.1},  # raw grain: weak food (bread later)
+	"carrot": {"name": "cenoura", "per_tile": 12, "food": 0.25},
+	"meat": {"name": "carne crua", "per_tile": 10, "food": 0.15},  # raw: so-so food (cooking later)
 }
+const START_FOOD := {"berries": 20}  # in the stockpile of a new colony
 const BUILT_BLOCKS := {World.WOOD: "wood", World.BRICK: "stone"}  # player blocks -> resource refunded
 const ROT_DIRS: Array[Vector3i] = [Vector3i.FORWARD, Vector3i.RIGHT, Vector3i.BACK, Vector3i.LEFT]
 
 var stock := _empty_stock()  # totals over all stockpile tiles (kept by _stock_changed)
 var infinite := false  # debug map: building never runs out
+var hunger := true  # villagers get hungry (the debug panel can switch it off)
 var stockpile := Vector3.ZERO  # colony home: where the first stockpile and the villagers start
 # Stockpile zones: {id, area: Rect2i, tiles: {feet cell: {kind, n}}}. One kind per tile.
 var zones: Array[Dictionary] = []
 var _zone_count := 0
+# Growing zones (Farming): {id, area, crop, tiles: {feet cell: {plant, sown, claimed}}}.
+var farms: Array[Dictionary] = []
+var _farm_count := 0
 # Workstations with bills (Crafting): base cell -> {item, bills: {recipe: {mode, target}}, claimed}.
 # Added when the player first opens a station; dropped when the station is gone.
 var stations := {}
@@ -100,6 +112,11 @@ func toggle_game_pause() -> void:
 	set_speed(_last_speed if speed == 0 else 0)
 
 
+# Days since the colony started, with the time of day as the fraction (berry regrowth, hunger).
+func now() -> float:
+	return day + time_of_day
+
+
 func clock_text() -> String:
 	var minutes := int(time_of_day * 24 * 60)
 	return "Dia %d · %02d:%02d" % [day, minutes / 60, minutes % 60]
@@ -109,6 +126,8 @@ func clock_text() -> String:
 func reset() -> void:
 	stock = _empty_stock()
 	stations.clear()
+	farms.clear()
+	_farm_count = 0
 	zones.clear()
 	_zone_count = 0
 	orders.clear()
@@ -278,6 +297,83 @@ func withdraw(c: Vector3i, kind: String, n: int) -> bool:
 	return true
 
 
+# --- Growing zones ---
+
+func farm_tile(c: Vector3i) -> Dictionary:  # {plant, sown, claimed}, or {} if c isn't farmed
+	var f := farm_of(c)
+	return f.tiles[c] if f else {}
+
+
+func farm_of(c: Vector3i) -> Dictionary:
+	for f in farms:
+		if f.tiles.has(c):
+			return f
+	return {}
+
+
+func add_farm(area: Rect2i) -> Dictionary:
+	_farm_count += 1
+	var f := {"id": _farm_count, "area": area, "crop": Farming.CROPS.keys()[0], "tiles": {}}
+	farms.append(f)
+	set_farm_area(f, area)
+	return f
+
+
+# Tiles: walkable soil (grass, dirt or farmland underneath) not used by anything else.
+func set_farm_area(f: Dictionary, area: Rect2i) -> void:
+	var old: Dictionary = f.tiles
+	f.area = area
+	f.tiles = {}
+	for x in range(area.position.x, area.end.x):
+		for z in range(area.position.y, area.end.y):
+			var c := Vector3i(x, world.top_at(x, z), z)
+			var soil := world.get_block(c + Vector3i.DOWN) in [World.GRASS, World.DIRT, World.FARMLAND]
+			if old.has(c):
+				f.tiles[c] = old[c]
+			elif soil and world.walkable(c) and not world.blocked.has(c) and not planned.has(c) \
+					and zone_tile(c).is_empty() and farm_tile(c).is_empty():
+				f.tiles[c] = {"plant": "", "sown": 0.0, "claimed": false}
+	_zones_reshaped()
+
+
+func remove_farm(f: Dictionary) -> void:
+	farms.erase(f)
+	_zones_reshaped()
+
+
+func cycle_crop(f: Dictionary) -> void:
+	var crops: Array = Farming.CROPS.keys()
+	f.crop = crops[(crops.find(f.crop) + 1) % crops.size()]
+	orders_changed.emit()
+
+
+# 0 = just sown .. 1 = ripe.
+func growth(t: Dictionary) -> float:
+	if t.plant == "":
+		return 0.0
+	return clampf((now() - t.sown) / Farming.CROPS[t.plant].grow_days, 0.0, 1.0)
+
+
+func farm_ripe(f: Dictionary) -> int:
+	return f.tiles.values().filter(func(t: Dictionary) -> bool: return t.plant != "" and growth(t) >= 1.0).size()
+
+
+# Nearest stockpile tile holding any food; tiles with enough to fill `need` hunger count as closer.
+func food_tile(from: Vector3, need: float) -> Variant:
+	var best = null
+	var best_d := INF
+	for z in zones:
+		for c: Vector3i in z.tiles:
+			var t: Dictionary = z.tiles[c]
+			if t.n == 0 or not RESOURCES[t.kind].has("food"):
+				continue
+			var d := from.distance_squared_to(Vector3(c)) + (0.0 if t.n * RESOURCES[t.kind].food >= need else 400.0)
+			if d < best_d:
+				best_d = d
+				best = c
+	return best
+
+
 # Goods of a tile leaving its zone go to other tiles; whatever doesn't fit anywhere is lost.
 func _relocate(t: Dictionary) -> void:
 	while t.n > 0:
@@ -291,11 +387,13 @@ func _relocate(t: Dictionary) -> void:
 		t.n -= k
 
 
-# Zone tiles changed: no tall grass growing through the piles.
+# Zone or farm tiles changed: no tall grass growing through the piles and crops.
 func _zones_reshaped() -> void:
 	var cells := {}
 	for z in zones:
 		cells.merge(z.tiles)
+	for f in farms:
+		cells.merge(f.tiles)
 	world.set_bare(cells)
 	_stock_changed()
 
@@ -357,13 +455,15 @@ func dig_cells(area: Rect2i, depth: int) -> Dictionary:
 	var cells := {}
 	for x in range(area.position.x, area.end.x):
 		for z in range(area.position.y, area.end.y):
-			var top := world.top_at(x, z) - 1
+			var top := world.top_at(x, z, world.cut_y) - 1  # under the layer cut: dig inside hills
 			var above := Vector3i(x, top + 1, z)
-			if world.blocked.has(above) or planned.has(above) or not zone_tile(above).is_empty():
-				continue  # tree, blueprint or stockpile on it: can't dig under that
+			if world.blocked.has(above) or planned.has(above) or not zone_tile(above).is_empty() \
+					or not farm_tile(above).is_empty():
+				continue  # tree, blueprint, stockpile or field on it: can't dig under that
 			for d in depth:
-				if top - d >= 0 and world.is_solid(Vector3i(x, top - d, z)):
-					cells[Vector3i(x, top - d, z)] = false
+				var c := Vector3i(x, top - d, z)
+				if top - d >= 0 and world.is_solid(c) and world.get_block(c) != World.BEDROCK:
+					cells[c] = false
 	return cells
 
 
@@ -378,7 +478,7 @@ func refresh_marker(o: Dictionary) -> void:
 	_free_marker(o)
 	var col: Color = PAUSED_COLOR if o.paused else ORDER_COLORS[o.kind]
 	var mesh: ArrayMesh = null
-	if o.kind == "wood":
+	if o.kind != "dig":  # tree / bush areas: ground tiles
 		mesh = VoxelMesh.shell(tiles(o.area, Color(col, 0.3)), true, 0.03, 0.45)
 	else:
 		var cells := {}
@@ -504,7 +604,7 @@ func roof_ladder(rect: Rect2i, base: int, along_x: bool) -> Dictionary:
 
 func _free(c: Vector3i) -> bool:
 	return world.in_bounds(c) and not world.is_solid(c) and not world.props.has(c) \
-		and not world.blocked.has(c) and not planned.has(c) and zone_tile(c).is_empty()
+		and not world.blocked.has(c) and not planned.has(c) and zone_tile(c).is_empty() and farm_tile(c).is_empty()
 
 
 # Lean on the ladder (or ladder blueprint) below, else on a wall next to this column.
@@ -720,6 +820,11 @@ func finish_area(area: Rect2i) -> void:
 			set_zone_area(pending_area.order, area)
 		else:
 			add_zone(area)
+	elif pending_area.kind == "farm":
+		if pending_area.order:
+			set_farm_area(pending_area.order, area)
+		else:
+			add_farm(area)
 	elif pending_area.order:
 		set_order_area(pending_area.order, area)
 	else:

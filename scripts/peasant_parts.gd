@@ -40,6 +40,11 @@ static func mesh(part: String, look := {}) -> ArrayMesh:
 			"cargo_iron_ore": _cache[key] = cargo_lump(Color(0.5, 0.5, 0.52), Color(0.78, 0.45, 0.26))
 			"cargo_charcoal": _cache[key] = cargo_lump(Color(0.13, 0.13, 0.14), Color(0.26, 0.25, 0.25))
 			"cargo_iron": _cache[key] = cargo_bar()
+			"cargo_berries": _cache[key] = cargo_basket()
+			"cargo_carrot": _cache[key] = cargo_lump(Color(0.95, 0.5, 0.12), Color(0.3, 0.6, 0.2))
+			"cargo_wheat": _cache[key] = cargo_sheaf()
+			"cargo_meat": _cache[key] = cargo_lump(Color(0.72, 0.22, 0.2), Color(0.95, 0.85, 0.8))
+			"bow": _cache[key] = bow()
 	return _cache[key]
 
 
@@ -173,6 +178,41 @@ static func cargo_lump(base: Color, speck: Color) -> ArrayMesh:
 		v[c] = speck
 	v.erase(Vector3i(0, 2, 0))
 	return VoxelMesh.build(v, S, Vector3(-2, -1.5, -2), 0.15)
+
+
+static func cargo_basket() -> ArrayMesh:
+	var v := {}
+	VoxelMesh.fill(v, Vector3i(0, 0, 0), Vector3i(5, 3, 4), Color(0.7, 0.53, 0.3))
+	VoxelMesh.fill(v, Vector3i(1, 2, 1), Vector3i(3, 2, 2), Color(0.85, 0.12, 0.18))
+	v[Vector3i(2, 3, 1)] = Color(0.6, 0.08, 0.3)
+	return VoxelMesh.build(v, S, Vector3(-2.5, -1.5, -2), 0.1)
+
+
+# Short bow held upright in the left hand, origin at the grip. Front (toward the target) is -Z:
+# the grip leads, the limbs curve back toward the archer (+Z) and the string runs tip to tip behind
+# them, with an arrow nocked on it pointing forward.
+static func bow() -> ArrayMesh:
+	var v := {}
+	var wood := Color(0.5, 0.33, 0.17)
+	for y in range(-5, 6):
+		var bend := 0 if absi(y) < 2 else (1 if absi(y) < 4 else 2)
+		v[Vector3i(0, y, bend)] = wood
+	for y in range(-5, 6):
+		v[Vector3i(0, y, 3)] = Color(0.9, 0.88, 0.8)  # string
+	v[Vector3i(0, 0, 0)] = Color(0.3, 0.2, 0.1)  # grip wrap
+	for z in range(-4, 3):
+		v[Vector3i(1, 0, z)] = Color(0.6, 0.45, 0.28)  # arrow shaft
+	v[Vector3i(1, 0, -5)] = Color(0.6, 0.62, 0.66)  # arrowhead
+	v[Vector3i(1, 1, 2)] = Color.WHITE  # fletching
+	v[Vector3i(1, -1, 2)] = Color.WHITE
+	return VoxelMesh.build(v, S, Vector3(-0.5, -0.5, -0.5), 0.0)
+
+
+static func cargo_sheaf() -> ArrayMesh:
+	var v := {}
+	VoxelMesh.fill(v, Vector3i(0, 0, 0), Vector3i(3, 7, 3), Color(0.88, 0.74, 0.35))
+	VoxelMesh.fill(v, Vector3i(0, 3, 0), Vector3i(3, 1, 3), Color(0.55, 0.38, 0.2))
+	return VoxelMesh.build(v, S, Vector3(-1.5, -3.5, -1.5), 0.1)
 
 
 static func cargo_bar() -> ArrayMesh:

@@ -22,7 +22,7 @@ func _initialize() -> void:
 	w.set_block(brick, World.BRICK)
 	var door := Vector3i(s.x + 6, w.top_at(s.x + 6, s.z), s.z)
 	w.add_prop(door, "wood_door", Vector3i.FORWARD)
-	var cut: Vector3i = w.trees.keys()[0]
+	var cut: Vector3i = w.trees.keys().filter(func(c) -> bool: return w.trees[c].kind != "bush")[0]
 	w.remove_tree(cut)
 	game.store("wood", 7)
 	game.store("stone", 3)

@@ -27,7 +27,7 @@ const SHAPES := {
 	"roof_inner": {"solid": false, "floor": 0.5, "faces": true, "roof": true},
 	"ridge": {"solid": false, "floor": 0.5, "faces": true, "roof": true},
 	"peak": {"solid": false, "floor": 0.5, "roof": true},
-	"kiln": {"solid": true, "faces": true, "size": Vector3i(1, 2, 1), "station": true},
+	"kiln": {"solid": true, "faces": true, "size": Vector3i(2, 2, 2), "station": true},
 	"furnace": {"solid": true, "faces": true, "size": Vector3i(2, 2, 2), "station": true},
 }
 const GROUPS := ["Madeira", "Pedra", "Telhado", "Utilidades", "Produção", "Iluminação"]
@@ -65,7 +65,7 @@ const GLASS := Color(0.62, 0.85, 1.0)
 const FLAME := Color(1, 0.72, 0.2)
 const EMBER := Color(1, 0.45, 0.1)
 # Workstation chimney top (node space) where smoke comes out.
-const SMOKE_AT := {"kiln": Vector3(0, 1.85, 0), "furnace": Vector3(0, 2.7, -0.06)}
+const SMOKE_AT := {"kiln": Vector3(0, 1.4, 0), "furnace": Vector3(0, 2.35, -0.06)}
 
 static var _meshes := {}
 static var _terrain_mat: ShaderMaterial
@@ -147,8 +147,8 @@ static func _add_fire(n: Node3D, item: String) -> void:
 			VoxelMesh.fill(v, Vector3i(6, 2, 8), Vector3i(4, 2, 3), EMBER)
 			VoxelMesh.fill(v, Vector3i(7, 2, 9), Vector3i(2, 3, 2), FLAME)
 		else:
-			VoxelMesh.fill(v, Vector3i(3, 3, 5), Vector3i(2, 1, 2), EMBER)
-			v[Vector3i(3, 4, 5)] = FLAME
+			VoxelMesh.fill(v, Vector3i(6, 0, 8), Vector3i(4, 1, 3), EMBER)
+			VoxelMesh.fill(v, Vector3i(7, 1, 8), Vector3i(2, 2, 2), FLAME)
 		var sz := size(item)
 		_meshes[key] = VoxelMesh.build(v, S, Vector3(-4 * sz.x, 0, -4 * sz.z), 0.1)
 	var fire := MeshInstance3D.new()
@@ -164,7 +164,7 @@ static func _add_fire(n: Node3D, item: String) -> void:
 	l.light_color = Color(1, 0.6, 0.3)
 	l.light_energy = 1.6
 	l.omni_range = 5.0
-	l.position = Vector3(0, 0.4, 0.6 if item == "furnace" else 0.3)
+	l.position = Vector3(0, 0.4, 0.6)
 	fire.add_child(l)
 	n.add_child(fire)
 	var smoke := CPUParticles3D.new()
@@ -184,7 +184,7 @@ static func _add_fire(n: Node3D, item: String) -> void:
 	grow.add_point(Vector2(1, 1.6))
 	smoke.scale_amount_curve = grow
 	var puff := BoxMesh.new()
-	puff.size = Vector3.ONE * 0.28
+	puff.size = Vector3.ONE * 0.36
 	var puff_mat := StandardMaterial3D.new()
 	puff_mat.albedo_color = Color(0.45, 0.45, 0.47, 0.75)
 	puff_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -297,16 +297,15 @@ static func _furnace(v: Dictionary) -> void:
 	var seam := Color(0.64, 0.36, 0.18)
 	VoxelMesh.fill(v, Vector3i(0, 0, 0), Vector3i(16, 2, 16), stone)
 	VoxelMesh.fill(v, Vector3i(0, 1, 0), Vector3i(16, 1, 1), stone.darkened(0.12))
-	for y in range(2, 14):
-		var inset := int((y - 2) / 2.5)
+	for y in range(2, 13):
+		var inset := int((y - 2) / 3.2)
 		for x in range(1 + inset, 15 - inset):
 			for z in range(1 + inset, 14 - inset):
 				var line := y % 4 == 1 or x == 7 or z == 7
 				v[Vector3i(x, y, z)] = seam if line else clay.darkened(0.05 * ((x + y) % 2))
-	VoxelMesh.fill(v, Vector3i(6, 14, 5), Vector3i(4, 6, 4), seam)  # chimney
-	VoxelMesh.fill(v, Vector3i(5, 20, 4), Vector3i(6, 2, 6), clay)  # rim
-	VoxelMesh.fill(v, Vector3i(7, 15, 6), Vector3i(2, 7, 2), Color.BLACK)
-	for y in range(15, 22):
+	VoxelMesh.fill(v, Vector3i(6, 13, 5), Vector3i(4, 4, 4), seam)  # chimney
+	VoxelMesh.fill(v, Vector3i(5, 17, 4), Vector3i(6, 2, 6), clay)  # rim
+	for y in range(14, 19):
 		for x in [7, 8]:
 			for z in [6, 7]:
 				v.erase(Vector3i(x, y, z))  # hollow flue
@@ -319,7 +318,7 @@ static func _furnace(v: Dictionary) -> void:
 				v.erase(Vector3i(x, y, z))
 			v[Vector3i(x, y, 7)] = Color(0.12, 0.08, 0.06)
 	for y in range(2, 9):
-		var zf := 12 - int((y - 2) / 2.5)
+		var zf := 12 - int((y - 2) / 3.2)
 		var frame: Array = [5, 10] if y < 7 else ([6, 9] if y == 7 else [6, 7, 8, 9])
 		for x in frame:
 			for z in range(8, zf + 1):
@@ -327,24 +326,48 @@ static func _furnace(v: Dictionary) -> void:
 					v[Vector3i(x, y, z)] = stone.lightened(0.05 * (y % 2))
 
 
-# Valheim charcoal kiln on an 8x16 grid (1x2 cells): an egg of dark mortared stones with a
-# six-sided mouth and chute in front (+Z) and a vent on top.
+# Real-life charcoal kiln ("rabo-quente"): a beehive dome of orange clay on a 16x16 grid (2x2 cells),
+# arched door in front (+Z), little air vents around the foot, a smoke hole on top, vertical cracks.
 static func _kiln(v: Dictionary) -> void:
-	for x in 8:
-		for y in 15:
-			for z in 8:
-				var dy := (y + 0.5 - 6.0) / (9.0 if y >= 6 else 7.0)
-				var d := Vector3((x + 0.5 - 4.0) / 4.0, dy, (z + 0.5 - 4.0) / 4.0)
-				if d.length_squared() < 1.0:
-					var k := hash(Vector3i(x / 2, (y + x % 2) / 2, z / 2)) % 100 / 100.0
-					v[Vector3i(x, y, z)] = Color(0.3, 0.33, 0.36).lerp(Color(0.46, 0.48, 0.5), k)
-	for y in range(12, 15):
-		for x in [3, 4]:
-			for z in [3, 4]:
-				v.erase(Vector3i(x, y, z))  # vent
-	for y in range(3, 6):
-		for x in range(2 if y == 4 else 3, 6 if y == 4 else 5):
-			for z in range(5, 8):
-				v.erase(Vector3i(x, y, z))  # six-sided mouth
-			v[Vector3i(x, y, 4)] = Color(0.08, 0.06, 0.05)
-	VoxelMesh.fill(v, Vector3i(3, 2, 5), Vector3i(2, 1, 3), Color(0.55, 0.56, 0.57))  # chute
+	var clay := Color(0.8, 0.57, 0.33)
+	var dark := Color(0.1, 0.07, 0.05)
+	for x in 16:
+		for z in 16:
+			var off := Vector2(x + 0.5 - 8.0, z + 0.5 - 8.0)
+			var r := off.length() / 7.6
+			if r >= 1.0:
+				continue
+			var h := maxi(2, int(11.5 * sqrt(1.0 - r * r)))
+			var crack := fmod(rad_to_deg(off.angle()) + 360.0 + 15.0, 72.0) < 3.0 and r > 0.4
+			for y in h:
+				var k := hash(Vector3i(x, y / 2, z)) % 100 / 100.0
+				var col := clay.darkened(0.12 * k)
+				if crack or y == 0:
+					col = clay.darkened(0.3)
+				v[Vector3i(x, y, z)] = col
+	# Arched door: carve to the middle, dark inside, darker clay rim around it.
+	for y in 8:
+		for x in range(5, 11):
+			var inside := x >= 6 and x <= 9 and (y < 6 or (y == 6 and x >= 7 and x <= 8))
+			for z in range(8, 16):
+				var c := Vector3i(x, y, z)
+				if not v.has(c):
+					continue
+				if inside:
+					v.erase(c)
+				elif y <= 7:
+					v[c] = clay.darkened(0.22)
+		for x in range(6, 10):
+			if y < 6 or (y == 6 and x >= 7 and x <= 8):
+				v[Vector3i(x, y, 7)] = dark
+	# Air vents around the foot (not on the door side) and the smoke hole on top.
+	for a in [30, 90, 150, 210, 330]:
+		var dir := Vector2.from_angle(deg_to_rad(a))
+		for t in range(4, 9):
+			var c := Vector3i(int(8 + dir.x * t), 1, int(8 + dir.y * t))
+			if v.has(c) and not v.has(c + Vector3i(signi(int(dir.x * 2)), 0, signi(int(dir.y * 2)))):
+				v[c] = dark
+	for x in [7, 8]:
+		for z in [7, 8]:
+			v.erase(Vector3i(x, 11, z))
+			v[Vector3i(x, 10, z)] = dark

@@ -6,7 +6,7 @@ class_name SaveGame
 ## Jobs in progress aren't saved: villagers pick them up again.
 
 const DIR := "user://saves/"
-const VERSION := 2  # 2: stockpile zones (1 had one fixed stockpile + global stock)
+const VERSION := 3  # 3: world WorldGen.DEPTH deeper; 2: stockpile zones (1: one stockpile + global stock)
 
 
 static func path_for(world_name: String) -> String:
@@ -36,9 +36,50 @@ static func read(path: String) -> Dictionary:
 	var file := FileAccess.open_compressed(path, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
 	if file == null:
 		return {}
-	file.get_var()  # header
+	var head = file.get_var()
 	var data = file.get_var()
-	return data if data is Dictionary else {}
+	if not data is Dictionary:
+		return {}
+	if head is Dictionary and head.get("version", 0) < 3:
+		_deepen(data)
+	return data
+
+
+# Saves before version 3: the world moved WorldGen.DEPTH blocks up. Every saved cell and position
+# rises with it (directions don't); saved columns get the new underground under them when they
+# load (World.saved_bottom).
+static func _deepen(d: Dictionary) -> void:
+	var up := Vector3i(0, WorldGen.DEPTH, 0)
+	var pad := PackedByteArray()
+	pad.resize(World.CHUNK * World.CHUNK * WorldGen.DEPTH)
+	for c: Vector2i in d.columns:
+		d.columns[c] = pad + d.columns[c]
+	d.saved_bottom = WorldGen.DEPTH
+	d.trees = _raised(d.trees, up)
+	for p: Array in d.props:
+		p[0] += up
+	for z: Dictionary in d.get("zones", []):
+		z.tiles = _raised(z.tiles, up)
+	for f: Dictionary in d.get("farms", []):
+		f.tiles = _raised(f.tiles, up)
+	d.stations = _raised(d.get("stations", {}), up)
+	for o: Dictionary in d.orders:
+		o.cells = o.cells.map(func(c: Vector3i) -> Vector3i: return c + up)
+	d.blueprints = _raised(d.blueprints, up)
+	d.demolish = d.demolish.map(func(c: Vector3i) -> Vector3i: return c + up)
+	for w: Dictionary in d.workers:
+		w.position += Vector3(up)
+	for a: Array in d.get("animals", []):
+		a[1] += Vector3(up)
+	d.stockpile += Vector3(up)
+	d.camera[0] += Vector3(up)
+
+
+static func _raised(cells: Dictionary, up: Vector3i) -> Dictionary:
+	var out := {}
+	for c: Vector3i in cells:
+		out[c + up] = cells[c]
+	return out
 
 
 static func delete(path: String) -> void:
@@ -68,7 +109,7 @@ static func capture(main: Node) -> Dictionary:
 	var trees := w.tree_left.duplicate()  # cut-down trees (0)
 	for cell: Vector3i in w.trees:
 		var t: Dictionary = w.trees[cell]
-		if t.amount < ResourceNode.amount_for(t.size):
+		if t.amount < ResourceNode.amount_for(t):
 			trees[cell] = t.amount
 	var props := []
 	for c: Vector3i in w.props:
@@ -80,6 +121,12 @@ static func capture(main: Node) -> Dictionary:
 		for c: Vector3i in z.tiles:
 			tiles[c] = [z.tiles[c].kind, z.tiles[c].n]
 		zones.append({"id": z.id, "area": z.area, "tiles": tiles})
+	var farms := []
+	for f in Game.farms:
+		var tiles := {}
+		for c: Vector3i in f.tiles:
+			tiles[c] = [f.tiles[c].plant, f.tiles[c].sown]
+		farms.append({"id": f.id, "area": f.area, "crop": f.crop, "tiles": tiles})
 	var stations := {}
 	for base: Vector3i in Game.stations:
 		stations[base] = {"item": Game.stations[base].item, "bills": Game.stations[base].bills}
@@ -92,20 +139,36 @@ static func capture(main: Node) -> Dictionary:
 	var workers := []
 	for wk: Worker in main.get_tree().get_nodes_in_group("workers"):
 		workers.append({"name": wk.worker_name, "color": wk.color, "look": wk.look, "priorities": wk.priorities,
-			"position": wk.position, "carrying": wk.carrying, "carry_count": wk.carry_count})
+			"position": wk.position, "carrying": wk.carrying, "carry_count": wk.carry_count,
+			"food": wk.food, "returns": _in_hand(wk)})
+	var animals := []
+	for a in main.get_tree().get_nodes_in_group("animals") + main.get_tree().get_nodes_in_group("corpses"):
+		animals.append([a.species, a.position, a.hp, a.state == Animal.DEAD, a.marked])
 	var rig: Node3D = main.get_node("CameraRig")
 	return {
+		"animals": animals,
 		"seed": w.gen.world_seed, "columns": cols, "trees": trees, "props": props,
-		"zones": zones, "zone_count": Game._zone_count, "stations": stations, "stockpile": Game.stockpile, "time_of_day": Game.time_of_day, "day": Game.day,
+		"zones": zones, "zone_count": Game._zone_count, "stations": stations, "farms": farms,
+		"farm_count": Game._farm_count, "stockpile": Game.stockpile, "time_of_day": Game.time_of_day, "day": Game.day,
 		"orders": orders, "order_count": Game._order_count, "blueprints": bps, "demolish": Game.demolish.keys(),
 		"workers": workers, "camera": [rig.position, rig.rotation.y, rig.distance, rig.pitch],
 	}
+
+
+# Goods a villager holds besides `carrying`: craft ingredients (the job itself isn't saved) and
+# leftovers of an interrupted craft. They're walked back to the stockpile after loading.
+static func _in_hand(wk: Worker) -> Dictionary:
+	var out: Dictionary = wk.returns.duplicate()
+	for kind: String in wk.held:
+		out[kind] = out.get(kind, 0) + wk.held[kind]
+	return out
 
 
 # Before anything generates: terrain and trees come from the save where it has them.
 static func apply_world(w: World, data: Dictionary) -> void:
 	w.gen = WorldGen.new(data.seed, w.flat)
 	w.saved_columns = data.columns
+	w.saved_bottom = data.get("saved_bottom", 0)
 	w.tree_left = data.trees
 
 
@@ -130,6 +193,14 @@ static func apply_game(main: Node, data: Dictionary) -> void:
 		Game.add_zone(Rect2i(s.x - 1, s.z - 1, 3, 3))
 		for kind: String in data.stock:
 			Game.store(kind, data.stock[kind])
+	for s: Dictionary in data.get("farms", []):
+		var tiles := {}
+		for c: Vector3i in s.tiles:
+			tiles[c] = {"plant": s.tiles[c][0], "sown": s.tiles[c][1], "claimed": false}
+		Game.farms.append({"id": s.id, "area": s.area, "crop": s.crop, "tiles": tiles})
+	Game._farm_count = data.get("farm_count", 0)
+	if Game.farms:
+		Game._zones_reshaped()
 	Game.time_of_day = data.time_of_day
 	Game.day = data.day
 	var plan := {}

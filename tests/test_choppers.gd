@@ -12,7 +12,7 @@ func _initialize() -> void:
 	await process_frame
 	var w = game.world
 	var s := Vector3i(game.stockpile.floor())
-	var target: Vector3i = w.trees.keys().reduce(func(a, b):
+	var target: Vector3i = w.trees.keys().filter(func(c) -> bool: return w.trees[c].kind != "bush").reduce(func(a, b):
 		return a if Vector3(a).distance_to(Vector3(s)) < Vector3(b).distance_to(Vector3(s)) else b)
 	game.add_order("wood", Rect2i(target.x, target.z, 1, 1))
 	var workers := get_nodes_in_group("workers")

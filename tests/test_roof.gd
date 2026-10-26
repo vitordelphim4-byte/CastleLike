@@ -2,7 +2,7 @@ extends SceneTree
 ## Run: godot --headless --path . --fixed-fps 60 -s tests/test_roof.gd
 ## Debug map houses: 5x5 gets a wooden hip roof, 10x5 a slate gable roof with overhang. Neither
 ## house has a way up, so each roof plan must bring its own ladder; workers then build everything
-## climbing the roof as it grows. 300 simulated seconds.
+## climbing the roof as it grows. 400 simulated seconds.
 
 var failed := false
 
@@ -30,8 +30,11 @@ func _initialize() -> void:
 	var ladders: Array = game.blueprints.keys().filter(func(c: Vector3i) -> bool: return game.blueprints[c].item == "ladder")
 	_check(ladders.size() >= 2 * 3, "each roof plan brought a ladder, got %d ladder cells" % ladders.size())
 	var total: int = game.blueprints.size()
+	for w in get_nodes_in_group("workers"):  # only building: the debug map's fields would distract them
+		for k in w.priorities:
+			w.priorities[k] = 1 if k == "build" else 0
 
-	for frame in 18000:
+	for frame in 24000:
 		await process_frame
 		if game.blueprints.is_empty():
 			break

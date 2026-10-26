@@ -5,6 +5,9 @@ extends PanelContainer
 var row := HBoxContainer.new()
 var res_labels := {}  # resource -> Label
 var cards := {}  # Worker -> activity Label
+var food_bars := {}  # Worker -> ProgressBar (hunger)
+var res_icons := {}  # resource -> TextureRect
+const ALWAYS_SHOWN := ["wood", "stone"]  # other resources only show once you have some
 var clock := Label.new()
 var speed_buttons: Array[Button] = []
 
@@ -13,7 +16,7 @@ func _ready() -> void:
 	var style: StyleBoxFlat = preload("res://scripts/build_menu.gd").panel_style()
 	style.set_content_margin_all(3)
 	add_theme_stylebox_override("panel", style)
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 6)
 	add_child(row)
 	for kind: String in Game.RESOURCES:
 		var icon := TextureRect.new()
@@ -30,10 +33,11 @@ func _ready() -> void:
 		row.add_child(icon)
 		var l := Label.new()
 		l.add_theme_font_size_override("font_size", 16)
-		l.custom_minimum_size = Vector2(34, 0)
+		l.custom_minimum_size = Vector2(26, 0)
 		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		row.add_child(l)
 		res_labels[kind] = l
+		res_icons[kind] = icon
 	row.add_child(VSeparator.new())
 	_add_clock()
 	row.add_child(VSeparator.new())
@@ -70,7 +74,7 @@ func _add_clock() -> void:
 func _add_cards() -> void:
 	for w: Worker in get_tree().get_nodes_in_group("workers"):
 		var card := Button.new()
-		card.custom_minimum_size = Vector2(160, 34)
+		card.custom_minimum_size = Vector2(128, 34)
 		card.focus_mode = Control.FOCUS_NONE
 		card.pressed.connect(_focus.bind(w))
 		var h := HBoxContainer.new()
@@ -99,6 +103,18 @@ func _add_cards() -> void:
 		act.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
 		act.clip_text = true
 		v.add_child(act)
+		var bar := ProgressBar.new()  # hunger: full = green, hungry = yellow, starving = red
+		bar.max_value = 1.0
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(0, 3)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0, 0, 0, 0.5)
+		bar.add_theme_stylebox_override("background", bg)
+		bar.add_theme_stylebox_override("fill", StyleBoxFlat.new())
+		v.add_child(bar)
+		food_bars[w] = bar
+		card.tooltip_text = "Barra: fome (cheia = alimentado)"
 		row.add_child(card)
 		cards[w] = act
 	_refresh_cards()
@@ -107,6 +123,9 @@ func _add_cards() -> void:
 func _refresh_resources() -> void:
 	for kind in res_labels:
 		res_labels[kind].text = "∞" if Game.infinite else str(Game.stock[kind])
+		var shown: bool = kind in ALWAYS_SHOWN or Game.stock[kind] > 0
+		res_labels[kind].visible = shown
+		res_icons[kind].visible = shown
 
 
 func _refresh_cards() -> void:
@@ -115,6 +134,10 @@ func _refresh_cards() -> void:
 		speed_buttons[i].set_pressed_no_signal(Game.SPEEDS[i] == Game.speed)
 	for w: Worker in cards:
 		cards[w].text = w.activity()
+		var bar: ProgressBar = food_bars[w]
+		bar.value = w.food
+		var fill: StyleBoxFlat = bar.get_theme_stylebox("fill")
+		fill.bg_color = Color(0.4, 0.85, 0.35) if w.food >= Worker.HUNGRY else (Color(0.95, 0.8, 0.25) if w.food > 0 else Color(0.95, 0.25, 0.2))
 
 
 func _focus(w: Worker) -> void:
@@ -122,3 +145,5 @@ func _focus(w: Worker) -> void:
 		other.selected = other == w
 	var rig: Node3D = get_node("../CameraRig")
 	rig.position = w.position
+	Game.world.cut_to(w.position)
+	Game.mode_changed.emit()

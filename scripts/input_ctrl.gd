@@ -6,8 +6,18 @@ extends Control
 ## height; R rotates; Shift+drag erases plans. X toggles the demolish tool (drag marks built pieces,
 ## Shift+drag unmarks). Roof tool: drag over the wall tops of a building (R turns the ridge).
 ## Right click / Esc leaves area and build modes.
+## Hovering a stockpile or field tile shows what's on it (amount / crop growth).
+## Right click with villagers selected: on a tree / bush / animal / corpse / ripe crop / stone or ore
+## block they do that job right away (RimWorld "prioritize"); anywhere else they walk there.
+## Hunt tool: a click on an animal marks (or unmarks) just that animal.
+## Seeing inside (Phase 9): PageDown / PageUp (or the slider on the right, ViewSlider) lower / raise
+## the layer cut one block (Shift = 5), Home turns it off; what's above the cut isn't drawn and
+## can't be clicked. V toggles the cursor x-ray; selected villagers hidden behind terrain always
+## get an x-ray hole.
 
 const CLICK_RADIUS := 30.0
+const XRAY_DEPTH := 6.0  # cursor x-ray: how far past the surface under the mouse it sees
+const CUT_ABOVE := 15  # raising the cut this far over the ground at the camera turns it off
 
 var drag_start := Vector2.ZERO
 var dragging := false
@@ -18,14 +28,25 @@ var hover_normal := Vector3i.ZERO  # build mode: face of the surface under the m
 var start_normal := Vector3i.ZERO
 var has_hover := false
 var preview: Array[Node3D] = []
+var tip := Label.new()  # hover info near the mouse
 
 
 func _ready() -> void:
 	Game.mode_changed.connect(_update_preview)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.08, 0.08, 0.08, 0.85)
+	bg.set_content_margin_all(5)
+	tip.add_theme_stylebox_override("normal", bg)
+	tip.add_theme_font_size_override("font_size", 14)
+	tip.visible = false
+	add_child(tip)
+	add_child(preload("res://scripts/view_slider.gd").new())
 
 
 func _unhandled_input(e: InputEvent) -> void:
-	if e is InputEventKey and e.pressed and not e.echo:
+	if e is InputEventKey and e.pressed and e.keycode in [KEY_PAGEUP, KEY_PAGEDOWN]:  # holding repeats
+		_step_cut((1 if e.keycode == KEY_PAGEUP else -1) * (5 if e.shift_pressed else 1))
+	elif e is InputEventKey and e.pressed and not e.echo:
 		match e.keycode:
 			KEY_B:
 				Game.set_building(not Game.building)
@@ -35,6 +56,12 @@ func _unhandled_input(e: InputEvent) -> void:
 				if Game.building:
 					Game.build_rot = (Game.build_rot + 1) % Game.ROT_DIRS.size()
 					Game.mode_changed.emit()
+			KEY_HOME:
+				Game.world.set_cut(World.SY)
+				Game.mode_changed.emit()
+			KEY_V:
+				Game.world.xray_cursor = not Game.world.xray_cursor
+				Game.mode_changed.emit()
 			KEY_X:
 				if Game.building:
 					Game.build_tool = "build" if Game.build_tool == "demolish" else "demolish"
@@ -51,9 +78,9 @@ func _unhandled_input(e: InputEvent) -> void:
 				Game.toggle_game_pause()
 			KEY_1, KEY_2, KEY_3:
 				Game.set_speed(e.keycode - KEY_0)
-			KEY_EQUAL, KEY_KP_ADD, KEY_PAGEUP:
+			KEY_EQUAL, KEY_KP_ADD:
 				_adjust_size(1)
-			KEY_MINUS, KEY_KP_SUBTRACT, KEY_PAGEDOWN:
+			KEY_MINUS, KEY_KP_SUBTRACT:
 				_adjust_size(-1)
 	elif e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN] \
 			and _adjust_size(1 if e.button_index == MOUSE_BUTTON_WHEEL_UP else -1):
@@ -78,20 +105,74 @@ func _unhandled_input(e: InputEvent) -> void:
 			_update_preview()
 		queue_redraw()
 	elif e is InputEventMouseMotion:
+		tip.visible = false
 		if _cell_mode():
 			_update_hover(e.position)
 			_update_preview()
 		elif dragging:
 			queue_redraw()
+		else:
+			_update_tip(e.position)
 	elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT and e.pressed:
 		if _cell_mode():
 			Game.set_building(false)
 			return
+		var chosen := get_tree().get_nodes_in_group("workers").filter(func(w: Worker) -> bool: return w.selected)
+		if chosen.is_empty():
+			return
+		var order := _pick_target(e.position)
+		if order:
+			var exclusive: bool = order.kind in ["gather", "butcher", "harvest", "dig"]  # one villager is enough
+			for w: Worker in chosen:
+				if not w.command(order.kind, order.target):
+					w.move_to(order.at)
+				if exclusive:
+					break
+			return
 		var hit := _raycast(e.position)
 		if hit:
-			for w: Worker in get_tree().get_nodes_in_group("workers"):
-				if w.selected:
-					w.move_to(hit.position + hit.normal * 0.5)
+			for w: Worker in chosen:
+				w.move_to(hit.position + hit.normal * 0.5)
+
+
+# Off -> first step down hides the ground layer at the camera; then one layer per step.
+func _step_cut(step: int) -> void:
+	var w := Game.world
+	var top := w.top_at(floori(w.focus.x), floori(w.focus.z))
+	if w.cut_y >= World.SY:
+		if step > 0:
+			return
+		w.set_cut(top + step)
+	elif w.cut_y + step > top + CUT_ABOVE:
+		w.set_cut(World.SY)
+	else:
+		w.set_cut(w.cut_y + step)
+	Game.mode_changed.emit()  # hint line + previews follow the new layer
+
+
+func _process(_delta: float) -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or Game.world == null:
+		return
+	var points: Array[Vector3] = []
+	for w: Worker in get_tree().get_nodes_in_group("workers"):
+		var head := w.global_position + Vector3.UP * 1.5
+		var hidden := w.visible and (_behind_terrain(cam, w.global_position + Vector3.UP * 0.3) or _behind_terrain(cam, head))
+		w.set_outline(hidden)
+		if hidden and w.selected:
+			points.append(w.global_position + Vector3.UP * 0.9)
+	if Game.world.xray_cursor:
+		var mouse := get_viewport().get_mouse_position()
+		var hit := _raycast(mouse)
+		if hit:
+			points.append(hit.position + cam.project_ray_normal(mouse) * XRAY_DEPTH)
+	Game.world.set_xray(points)
+
+
+func _behind_terrain(cam: Camera3D, p: Vector3) -> bool:
+	var from := cam.global_position
+	var hit := Game.world.raycast_cells(from, (p - from).normalized(), Game.world.is_solid, from.distance_to(p) - 0.8)
+	return not hit.is_empty()
 
 
 # Build height or dig depth, depending on mode. False if neither applies.
@@ -200,6 +281,13 @@ func _update_preview() -> void:
 
 
 func _finish_area() -> void:
+	var click := drag_start.distance_to(get_viewport().get_mouse_position()) < 5
+	if click and Game.pending_area.kind == "hunt":
+		var order := _pick_target(drag_start)
+		if order and order.kind == "hunt":
+			order.target.marked = not order.target.marked
+			Game.cancel_area()
+			return
 	if has_start and has_hover:
 		Game.finish_area(_drag_rect())
 	else:
@@ -230,7 +318,7 @@ func _select(rect: Rect2, additive: bool) -> void:
 		if not additive:
 			w.selected = false
 		var center: Vector3 = w.global_position + Vector3.UP * 0.7
-		if cam.is_position_behind(center):
+		if cam.is_position_behind(center) or not w.visible:
 			continue
 		var sp := cam.unproject_position(center)
 		if is_click:
@@ -242,6 +330,8 @@ func _select(rect: Rect2, additive: bool) -> void:
 			w.selected = true
 	if best:
 		best.selected = true
+		Game.world.cut_to(best.position)
+		Game.mode_changed.emit()
 
 
 # Clicked a workstation: open its panel.
@@ -256,11 +346,82 @@ func _open_station(screen_pos: Vector2) -> bool:
 	return true
 
 
+# What a right click at screen_pos points at: {kind, target, at} or {}. Animals, corpses, trees and
+# bushes are picked by how close they are on screen (they have no collision); crops and blocks by
+# the ground under the mouse.
+func _pick_target(screen_pos: Vector2) -> Dictionary:
+	var cam := get_viewport().get_camera_3d()
+	var best := {}
+	var best_d := 40.0
+	var things := get_tree().get_nodes_in_group("animals") + get_tree().get_nodes_in_group("corpses")
+	for a: Node3D in things:
+		if not a.visible:
+			continue  # above the layer cut
+		var c := a.global_position + Vector3.UP * 0.4
+		if not cam.is_position_behind(c) and cam.unproject_position(c).distance_to(screen_pos) < best_d:
+			best_d = cam.unproject_position(c).distance_to(screen_pos)
+			best = {"kind": "butcher" if a.state == Animal.DEAD else "hunt", "target": a, "at": a.position}
+	for n: ResourceNode in Game.world.tree_nodes.values():
+		if not n.visible:
+			continue
+		var c := n.global_position + Vector3.UP * (0.4 if n.kind == "berries" else 1.0)
+		if not cam.is_position_behind(c) and cam.unproject_position(c).distance_to(screen_pos) < best_d:
+			best_d = cam.unproject_position(c).distance_to(screen_pos)
+			best = {"kind": "gather" if n.kind == "berries" else "wood", "target": n, "at": n.position}
+	if best:
+		return best
+	var hit := _raycast(screen_pos)
+	if hit.is_empty():
+		return {}
+	var block := Vector3i((hit.position - hit.normal * 0.5).floor())
+	var f := Game.farm_tile(block + Vector3i.UP)
+	if f and f.plant != "" and Game.growth(f) >= 1.0 and not f.claimed:
+		return {"kind": "harvest", "target": block + Vector3i.UP, "at": Vector3(block) + Vector3(0.5, 1, 0.5)}
+	if Game.world.get_block(block) in [World.STONE, World.IRON_ORE, World.COAL_ORE, World.DEEPSLATE]:
+		return {"kind": "dig", "target": block, "at": hit.position + hit.normal * 0.5}
+	return {}
+
+
+# What's on the stockpile / field tile under the mouse.
+func _update_tip(screen_pos: Vector2) -> void:
+	var hit := _raycast(screen_pos)
+	if hit.is_empty():
+		return
+	var feet := Vector3i((hit.position - hit.normal * 0.5).floor()) + Vector3i.UP
+	var text := ""
+	var t := Game.zone_tile(feet)
+	if t:
+		if t.n > 0:
+			text = "Estoque: %s %d/%d" % [Game.RESOURCES[t.kind].name.capitalize(), t.n, Game.RESOURCES[t.kind].per_tile]
+		else:
+			text = "Estoque: vazio"
+	var f := Game.farm_tile(feet)
+	if f:
+		var crop_name: String = Farming.CROPS[f.plant].name if f.plant else Farming.CROPS[Game.farm_of(feet).crop].name
+		var g := Game.growth(f)
+		if f.plant == "":
+			text = "Plantação: vazio (vai plantar %s)" % crop_name
+		elif g >= 1.0:
+			text = "%s maduro — pronto para colher" % crop_name
+		else:
+			var hours: float = (1.0 - g) * Farming.CROPS[f.plant].grow_days * 24.0
+			text = "%s: %d%% (pronto em %.0f h)" % [crop_name, int(g * 100), ceilf(hours)]
+	if text:
+		tip.text = text
+		tip.position = screen_pos + Vector2(18, 18)
+		tip.reset_size()
+		tip.visible = true
+
+
 func _raycast(screen_pos: Vector2) -> Dictionary:
 	var cam := get_viewport().get_camera_3d()
 	var from := cam.project_ray_origin(screen_pos)
-	var to := from + cam.project_ray_normal(screen_pos) * 500
-	return cam.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(from, to))
+	# Grid walk instead of physics: terrain has no collision shapes (they cost ~60% of its memory).
+	var hit := Game.world.raycast_cells(from, cam.project_ray_normal(screen_pos), Game.world.is_solid, 500.0)
+	if hit.is_empty() or hit.normal == Vector3i.ZERO:
+		return {}
+	var n := Vector3(hit.normal)
+	return {"position": Vector3(hit.cell) + Vector3.ONE * 0.5 + n * 0.5, "normal": n}  # center of the face hit
 
 
 func _draw() -> void:

@@ -6,17 +6,18 @@ extends Node3D
 ## nav graph covers every column whose nav was built and is patched locally when a block changes.
 
 signal terrain_changed
+signal cut_changed
 
 const CHUNK := 16
-const SY := 64
+const SY := 192  # WorldGen.DEPTH blocks of underground below the old sea floor + terrain + sky
 const SECTION := 16  # meshes are built per 16x16x16 section of a column
 const SECTIONS := SY / SECTION
 const SECTION_VOL := CHUNK * CHUNK * SECTION
-const VIEW := 7  # columns (Chebyshev distance) meshed around the focus; fog hides the edge
+const VIEW := 8  # columns (Chebyshev distance) meshed around the focus; fog hides the edge
 const KEEP := VIEW + 2  # meshes farther than this are freed
 const STREAM_BUDGET_MS := 6.0
 # Saved as bytes: only append new types at the end. Non-cube pieces live in `props`.
-enum { AIR, GRASS, DIRT, STONE, WOOD, BRICK, SAND, SNOW, WATER, IRON_ORE }
+enum { AIR, GRASS, DIRT, STONE, WOOD, BRICK, SAND, SNOW, WATER, IRON_ORE, FARMLAND, DEEPSLATE, BEDROCK, COAL_ORE }
 const COLORS := {
 	GRASS: Color(0.36, 0.62, 0.25),
 	DIRT: Color(0.45, 0.30, 0.18),
@@ -26,13 +27,23 @@ const COLORS := {
 	SAND: Color(0.86, 0.79, 0.55),
 	SNOW: Color(0.93, 0.95, 0.98),
 	IRON_ORE: Color(0.50, 0.50, 0.52),  # stone with rust specks (terrain shader)
+	FARMLAND: Color(0.36, 0.24, 0.14),  # tilled soil with furrows (terrain shader)
+	DEEPSLATE: Color(0.30, 0.30, 0.34),  # deep stone, layered (terrain shader)
+	BEDROCK: Color(0.17, 0.17, 0.18),  # world floor, can't be dug
+	COAL_ORE: Color(0.50, 0.50, 0.52),  # stone with black lumps (terrain shader)
 }
 const AO_LIGHT := [0.5, 0.68, 0.84, 1.0]  # by number of open neighbors at a corner
 const GRASS_CHANCE := 0.45
 const FLOWER_CHANCE := 0.05
+const TUFT_RANGE := 45.0  # grass tufts are hidden beyond this camera distance
+const TUFT_SIZE := 0.8  # tuft quad width and height, in blocks
+# Atlas tiles after the plain grass one: [petal color, flower heart] (poppy, dandelion, daisy, cornflower).
+const TUFT_TILES := [[], [Color(0.9, 0.18, 0.15), Color(0.35, 0.08, 0.06)], [Color(1, 0.84, 0.2), Color(0.95, 0.6, 0.1)],
+	[Color(0.97, 0.97, 0.94), Color(1, 0.85, 0.25)], [Color(0.35, 0.5, 0.95), Color(0.15, 0.2, 0.55)]]
 const H_DIRS: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.BACK, Vector3i.FORWARD]
 const N_OFF := [1, -1, CHUNK * CHUNK, -CHUNK * CHUNK, CHUNK, -CHUNK]  # column index offsets matching VoxelMesh.DIRS
 const NAV_ID_OFFSET := 1 << 20
+const XRAY_MAX := 9  # matches view_clip.gdshaderinc
 
 @export var flat := false  # debug map: endless flat plain
 @export var world_seed := 0  # 0 = random each run
@@ -42,6 +53,7 @@ var focus := Vector3.ZERO  # streaming center, set from the camera
 var columns := {}  # Vector2i -> PackedByteArray, index lx + 16 * (lz + 16 * y)
 var dirty := {}  # Vector2i -> true: columns changed since generation (what a save stores)
 var saved_columns := {}  # from a loaded save: Vector2i -> blocks, used instead of generating
+var saved_bottom := 0  # layers under saved columns taken from the generator (old, shallower saves)
 var tree_left := {}  # tree cell -> wood left, for trees cut down (0); from a save also half-cut ones
 var opaque := {}  # Vector2i -> PackedInt32Array: opaque blocks per section (buried sections aren't meshed)
 var nav_built := {}  # Vector2i -> true
@@ -52,7 +64,7 @@ var tree_nodes := {}  # cell -> ResourceNode, only near the camera
 var material := ShaderMaterial.new()
 var water_material := ShaderMaterial.new()
 var sway := ShaderMaterial.new()
-var tuft_meshes: Array[ArrayMesh] = []  # tall grass, red flowers, yellow flowers
+var tuft_meshes: Array[ArrayMesh] = []  # one per TUFT_TILES entry
 var astar := AStar3D.new()
 var blocked := {}  # Vector3i -> true: cells occupied by trees / planned solid pieces
 var bare := {}  # cells kept free of tall grass (stockpile tiles)
@@ -61,6 +73,12 @@ var bare := {}  # cells kept free of tall grass (stockpile tiles)
 var props := {}
 var prop_nodes := {}  # base cell -> Node3D
 var door_tweens := {}  # base cell -> Tween swinging that door
+# Layer cut (Phase 9): cells at y >= cut_y aren't drawn or picked; SY = off. caps: column -> mesh
+# of the cut plane (top faces of blocks just under it whose cell above is solid), or null.
+var cut_y := SY
+var caps := {}
+var xray_cursor := false  # V: see through the ground around the mouse
+var _cut_tick := 0.0
 var _offsets: Array[Vector2i] = []  # column offsets around the focus, nearest first
 var _unload_wait := 0
 
@@ -70,16 +88,21 @@ func _ready() -> void:
 	material.shader = preload("res://shaders/terrain.gdshader")
 	water_material.shader = preload("res://shaders/water.gdshader")
 	sway.shader = preload("res://shaders/grass.gdshader")
-	for flower: Color in [Color.TRANSPARENT, Color(0.9, 0.2, 0.2), Color(1, 0.85, 0.2)]:
-		tuft_meshes.append(_tuft_mesh(flower))
+	sway.set_shader_parameter("tex", _tuft_atlas())
+	for k in TUFT_TILES.size():
+		tuft_meshes.append(_tuft_mesh(k))
 	for x in range(-VIEW - 1, VIEW + 2):
 		for z in range(-VIEW - 1, VIEW + 2):
 			_offsets.append(Vector2i(x, z))
 	_offsets.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.length_squared() < b.length_squared())
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	stream(STREAM_BUDGET_MS)
+	_cut_tick -= delta
+	if cut_y < SY and _cut_tick <= 0.0:
+		_cut_tick = 0.2
+		_apply_cut_visibility()
 
 
 # --- Streaming ---
@@ -98,6 +121,8 @@ func stream(budget_ms: float) -> void:
 			_build_nav(c)
 		elif ring <= VIEW and not meshed.has(c):
 			_mesh_column(c)
+		elif cut_y < SY and meshed.has(c) and not caps.has(c):
+			_build_cap(c)
 	_unload_wait += 1
 	if _unload_wait > 30:
 		_unload_wait = 0
@@ -147,25 +172,35 @@ func is_solid(p: Vector3i) -> bool:
 
 
 func set_block(p: Vector3i, t: int) -> void:
-	if not in_bounds(p):
-		return
-	var c := Vector2i(p.x >> 4, p.z >> 4)
-	var i := (p.x & 15) + CHUNK * ((p.z & 15) + CHUNK * p.y)
-	var old: int = _data(c)[i]
-	columns[c][i] = t
-	dirty[c] = true
-	opaque[c][p.y / SECTION] += int(_opaque(t)) - int(_opaque(old))
-	# Sections around too: face culling and AO read across section borders.
+	set_blocks({p: t})
+
+
+# cells: Vector3i -> block type. Many at once (debug scenarios): each touched section rebuilds once.
+func set_blocks(cells: Dictionary) -> void:
 	var done := {}
-	for dx in [-1, 0, 1]:
-		for dy in [-1, 0, 1]:
-			for dz in [-1, 0, 1]:
-				var q := p + Vector3i(dx, dy, dz)
-				var key := Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)
-				if in_bounds(q) and not done.has(key):
-					done[key] = true
-					_rebuild_section(Vector2i(key.x, key.z), key.y)
-	_update_nav(p)
+	for p: Vector3i in cells:
+		if not in_bounds(p):
+			continue
+		var c := Vector2i(p.x >> 4, p.z >> 4)
+		var i := (p.x & 15) + CHUNK * ((p.z & 15) + CHUNK * p.y)
+		var old: int = _data(c)[i]
+		columns[c][i] = cells[p]
+		dirty[c] = true
+		opaque[c][p.y / SECTION] += int(_opaque(cells[p])) - int(_opaque(old))
+		# Sections around too: face culling and AO read across section borders.
+		for dx in [-1, 0, 1]:
+			for dy in [-1, 0, 1]:
+				for dz in [-1, 0, 1]:
+					var q := p + Vector3i(dx, dy, dz)
+					if in_bounds(q):
+						done[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
+		if p.y == cut_y - 1 or p.y == cut_y:
+			_free_cap(c)  # the stream rebuilds it next frame
+	for key: Vector3i in done:
+		_rebuild_section(Vector2i(key.x, key.z), key.y)
+	for p: Vector3i in cells:
+		if in_bounds(p):
+			_update_nav(p)
 	terrain_changed.emit()
 
 
@@ -184,6 +219,10 @@ func _generate(c: Vector2i) -> void:
 	var blocks: PackedByteArray = g.blocks
 	if saved_columns.has(c):
 		blocks = saved_columns[c]
+		blocks.resize(CHUNK * CHUNK * SY)  # saves from before SY grew: pad the top with air
+		if saved_bottom > 0:
+			var n := saved_bottom * CHUNK * CHUNK
+			blocks = g.blocks.slice(0, n) + blocks.slice(n)
 		saved_columns.erase(c)
 		dirty[c] = true
 	columns[c] = blocks
@@ -195,24 +234,38 @@ func _generate(c: Vector2i) -> void:
 	opaque[c] = counts
 	var cells := []
 	for t: Dictionary in g.trees:
-		t.amount = tree_left.get(t.cell, ResourceNode.amount_for(t.size))
-		if t.amount == 0:
-			continue  # cut down before the save
+		t.amount = tree_left.get(t.cell, ResourceNode.amount_for(t))
+		if t.amount == 0 and t.kind != "bush":
+			continue  # cut down before the save (a picked bush stays and grows back)
 		trees[t.cell] = t
 		cells.append(t.cell)
 		set_blocked(t.cell, true)
 	chunk_trees[c] = cells
 
 
-# Highest free cell above column (x, z), i.e. where feet stand.
-func top_at(x: int, z: int) -> int:
-	for y in range(SY - 1, -1, -1):
+# Highest free cell above column (x, z), i.e. where feet stand. below: only look under that layer
+# (the layer cut, for what the player points at).
+func top_at(x: int, z: int, below := SY) -> int:
+	for y in range(mini(below, SY) - 1, -1, -1):
 		if is_solid(Vector3i(x, y, z)):
 			return y + 1
 	return 0
 
 
 # --- Trees ---
+
+# Places a tree or bush ({cell, kind, size, variant}) by hand (debug map); its column generates
+# first so generation doesn't plant over it later.
+func add_tree(t: Dictionary) -> void:
+	var c := Vector2i(t.cell.x >> 4, t.cell.z >> 4)
+	_data(c)
+	t.amount = t.get("amount", ResourceNode.amount_for(t))
+	trees[t.cell] = t
+	chunk_trees[c] = chunk_trees.get(c, []) + [t.cell]
+	set_blocked(t.cell, true)
+	if meshed.has(c):
+		_spawn_tree(t.cell)
+
 
 func remove_tree(cell: Vector3i) -> void:
 	trees.erase(cell)
@@ -250,6 +303,7 @@ func _unmesh_column(c: Vector2i) -> void:
 		if n:
 			n.queue_free()
 	meshed.erase(c)
+	_free_cap(c)
 	for cell: Vector3i in chunk_trees.get(c, []):
 		if tree_nodes.has(cell) and tree_nodes[cell].claims == 0:
 			tree_nodes[cell].queue_free()
@@ -261,7 +315,11 @@ func _rebuild_section(c: Vector2i, s: int) -> void:
 		return
 	if meshed[c][s]:
 		meshed[c][s].queue_free()
-	meshed[c][s] = null if _buried(c, s) else _build_section(c, s)
+	# All air: nothing to draw (water only lies at or below WATER_LEVEL and isn't counted as opaque).
+	var empty: bool = opaque[c][s] == 0 and s * SECTION > WorldGen.WATER_LEVEL
+	meshed[c][s] = null if empty or _buried(c, s) else _build_section(c, s)
+	if meshed[c][s]:
+		meshed[c][s].visible = s * SECTION < cut_y
 
 
 # Solid all through with solid sections on every side: nothing in it can be seen.
@@ -315,12 +373,7 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 		var mesh := st.commit()
 		var mi := MeshInstance3D.new()
 		mi.mesh = mesh
-		node.add_child(mi)
-		var body := StaticBody3D.new()
-		var shape := CollisionShape3D.new()
-		shape.shape = mesh.create_trimesh_shape()
-		body.add_child(shape)
-		node.add_child(body)
+		node.add_child(mi)  # no collision: picking walks the voxel grid (raycast_cells)
 	if water_faces > 0:
 		wst.set_material(water_material)
 		var wmi := MeshInstance3D.new()
@@ -329,6 +382,92 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 		node.add_child(wmi)
 	_add_tufts(node, grass_tops)
 	return node
+
+
+# --- Seeing inside (layer cut, x-ray) ---
+
+# Hide every layer from y up (SY = show all). Caps on the cut plane stream in nearest first.
+func set_cut(y: int) -> void:
+	cut_y = clampi(y, 1, SY)
+	for m: ShaderMaterial in [material, water_material, sway]:
+		m.set_shader_parameter("cut_y", float(cut_y))
+	for c: Vector2i in caps.keys():
+		_free_cap(c)
+	for c: Vector2i in meshed:
+		for s in SECTIONS:
+			if meshed[c][s]:
+				meshed[c][s].visible = s * SECTION < cut_y
+	_apply_cut_visibility()
+	cut_changed.emit()
+
+
+# Feet level of the natural ground at (x, z): buildings and digging don't move it.
+func ground_at(x: int, z: int) -> int:
+	return clampi(int(gen.height(x, z)) + 1, 1, SY - 1)
+
+
+# Jump the cut to a villager's floor (clicked / picked in the top bar): its two body cells show,
+# everything over its head hides. Out in the open with no cut on, the view stays as it is.
+func cut_to(feet: Vector3) -> void:
+	var y := floori(feet.y + 0.01)
+	if cut_y >= SY and top_at(floori(feet.x), floori(feet.z)) <= y:
+		return
+	set_cut(y + 2)
+
+
+# Up to XRAY_MAX world points the camera sees through the ground to (selected villagers, cursor).
+func set_xray(points: Array[Vector3]) -> void:
+	var v := PackedVector4Array()
+	v.resize(XRAY_MAX)
+	for i in mini(points.size(), XRAY_MAX):
+		v[i] = Vector4(points[i].x, points[i].y, points[i].z, 1.0)
+	for m: ShaderMaterial in [material, water_material, sway]:
+		m.set_shader_parameter("xray", v)
+
+
+# Things standing in a hidden layer (feet above the cut's top visible block) disappear whole.
+func _apply_cut_visibility() -> void:
+	var nodes: Array = tree_nodes.values() + prop_nodes.values()
+	for g in ["workers", "animals", "corpses"]:
+		nodes.append_array(get_tree().get_nodes_in_group(g))
+	for parent in get_tree().get_nodes_in_group("cut_hide_children"):  # stockpile items, crops
+		nodes.append_array(parent.get_children())
+	for n in nodes:
+		if is_instance_valid(n) and n is Node3D:
+			n.visible = floori(n.global_position.y + 0.01) <= cut_y
+
+
+func _build_cap(c: Vector2i) -> void:
+	caps[c] = null
+	var y := cut_y - 1
+	if y < 0 or y >= SY - 1:
+		return
+	var data: PackedByteArray = columns[c]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var faces := 0
+	for lz in CHUNK:
+		for lx in CHUNK:
+			var i := lx + CHUNK * (lz + CHUNK * y)
+			var t := data[i]
+			if _opaque(t) and _opaque(data[i + CHUNK * CHUNK]):
+				var col := Color(COLORS[t], 1.0)
+				VoxelMesh.add_face(st, Vector3(c.x * CHUNK + lx, y, c.y * CHUNK + lz), Vector3.UP, [col, col, col, col], 1.0, Vector2(t, 1))
+				faces += 1
+	if faces == 0:
+		return
+	st.set_material(material)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	caps[c] = mi
+
+
+func _free_cap(c: Vector2i) -> void:
+	if caps.get(c):
+		caps[c].queue_free()
+	caps.erase(c)
 
 
 # Face with Minecraft-style per-corner ambient occlusion baked into vertex alpha.
@@ -356,7 +495,9 @@ func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i) -> void:
 
 # Tall grass and flowers on exposed grass blocks. Seeded per column so rebuilds don't reshuffle.
 func _add_tufts(node: Node3D, spots: Array[Vector3i]) -> void:
-	var lists: Array = [[], [], []]
+	var lists: Array = []
+	for k in TUFT_TILES.size():
+		lists.append([])
 	var rng := RandomNumberGenerator.new()
 	for p in spots:
 		if blocked.has(p) or props.has(p) or bare.has(p):
@@ -365,7 +506,7 @@ func _add_tufts(node: Node3D, spots: Array[Vector3i]) -> void:
 		var roll := rng.randf()
 		if roll > GRASS_CHANCE:
 			continue
-		var kind := 0 if roll > FLOWER_CHANCE else 1 + rng.randi() % 2
+		var kind := 0 if roll > FLOWER_CHANCE else 1 + rng.randi() % (TUFT_TILES.size() - 1)
 		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * rng.randf_range(0.8, 1.3))
 		lists[kind].append(Transform3D(b, Vector3(p.x + rng.randf_range(0.25, 0.75), p.y, p.z + rng.randf_range(0.25, 0.75))))
 	for i in lists.size():
@@ -381,23 +522,61 @@ func _add_tufts(node: Node3D, spots: Array[Vector3i]) -> void:
 		mmi.multimesh = mm
 		mmi.material_override = sway
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = TUFT_RANGE  # far grass is a few pixels: skip it
+		mmi.visibility_range_end_margin = 8.0
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		node.add_child(mmi)
 
 
-# Small voxel tuft: blades getting lighter toward the tip; optional flower in the middle.
-func _tuft_mesh(flower: Color) -> ArrayMesh:
-	var v := {}
-	var blades := [Vector2i(0, 0), Vector2i(2, 1), Vector2i(4, 0), Vector2i(1, 3), Vector2i(3, 4), Vector2i(4, 2), Vector2i(0, 4)]
-	for i in blades.size():
-		var h := 3 + (i * 7) % 4
-		for y in h:
-			v[Vector3i(blades[i].x, y, blades[i].y)] = Color(0.28, 0.52, 0.16).lerp(Color(0.55, 0.82, 0.3), float(y) / h)
-	if flower.a > 0:
-		VoxelMesh.fill(v, Vector3i(2, 0, 2), Vector3i(1, 7, 1), Color(0.3, 0.55, 0.2))
-		for d in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
-			v[Vector3i(2, 7, 2) + d] = flower
-		v[Vector3i(2, 7, 2)] = Color(1, 0.9, 0.4)
-	return VoxelMesh.build(v, 0.07, Vector3(-2.5, 0, -2.5))
+# Tuft = two crossed quads showing a pixel-art tile with cut-out alpha (Minecraft style): 4 triangles
+# per tuft instead of dozens of voxel faces. Tile `kind` of the TUFT_TILES atlas.
+func _tuft_mesh(kind: int) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_normal(Vector3.UP)  # lit like the ground under it (the shader forces this too)
+	var u0 := float(kind) / TUFT_TILES.size()
+	var u1 := float(kind + 1) / TUFT_TILES.size()
+	var r := TUFT_SIZE / 2.0
+	for d: Vector2 in [Vector2(r, r), Vector2(r, -r)]:  # the two diagonals of the cell
+		var q := [Vector3(-d.x, 0, -d.y), Vector3(d.x, 0, d.y), Vector3(d.x, TUFT_SIZE, d.y), Vector3(-d.x, TUFT_SIZE, -d.y)]
+		var uv := [Vector2(u0, 1), Vector2(u1, 1), Vector2(u1, 0), Vector2(u0, 0)]
+		for i in [0, 1, 2, 0, 2, 3]:  # winding doesn't matter: the grass shader draws both sides
+			st.set_uv(uv[i])
+			st.add_vertex(q[i])
+	return st.commit()
+
+
+# 16x16 pixel tiles side by side: tall grass, then a flower over short grass per TUFT_TILES color.
+func _tuft_atlas() -> ImageTexture:
+	var n := TUFT_TILES.size()
+	var img := Image.create(16 * n, 16, false, Image.FORMAT_RGBA8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 1234
+	for k in n:
+		var ox := 16 * k
+		var flower: bool = k > 0
+		for x in 16:
+			if rng.randf() < 0.2:
+				continue  # gap between blades
+			var h := rng.randi_range(3, 8) if flower else rng.randi_range(6, 15)
+			var lean := rng.randi_range(-1, 1)
+			for i in h:
+				var t := float(i) / h
+				# Base = the grass block color so tufts melt into the ground; only the tips get lighter.
+				var col := (COLORS[GRASS] as Color).lerp(Color(0.6, 0.84, 0.34), t) * rng.randf_range(0.95, 1.05)
+				var px := clampi(x + (lean if t > 0.7 else 0), 0, 15)  # tips bend a little
+				img.set_pixel(ox + px, 15 - i, Color(col, 1))
+		if flower:
+			var petal: Color = TUFT_TILES[k][0]
+			var heart: Color = TUFT_TILES[k][1]
+			for y in range(5, 16):
+				img.set_pixel(ox + 7, y, Color(0.3, 0.55, 0.2))  # stem
+			img.set_pixel(ox + 8, 10, Color(0.35, 0.62, 0.22))  # leaf
+			for o: Vector2i in [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1), Vector2i(-2, 0), Vector2i(2, 0), Vector2i(0, -2), Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
+				img.set_pixel(ox + 7 + o.x, 3 + o.y, petal if o.length() < 2 or rng.randf() < 0.8 else petal.darkened(0.15))
+			img.set_pixel(ox + 7, 3, heart)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
 
 
 # Replaces the set of grass-free cells and rebuilds the sections whose tufts changed.
@@ -521,7 +700,7 @@ func raycast_cells(from: Vector3, dir: Vector3, hit: Callable, max_dist := 300.0
 	var normal := Vector3i.ZERO
 	var t := 0.0
 	while t <= max_dist:
-		if hit.call(cell):
+		if cell.y < cut_y and hit.call(cell):  # hidden layers can't be pointed at
 			return {"cell": cell, "normal": normal}
 		var a := 0 if t_max.x < t_max.y and t_max.x < t_max.z else (1 if t_max.y < t_max.z else 2)
 		cell[a] += step[a]
@@ -589,7 +768,17 @@ func _nearest_point(pos: Vector3) -> int:
 func _build_nav(c: Vector2i) -> void:
 	var data: PackedByteArray = _data(c)
 	var cells: Array[Vector3i] = []
+	# Sky sections (no ground in them or just below, no built pieces) have nothing to stand on.
+	var with_props := {}
+	for p: Vector3i in props:
+		if p.x >> 4 == c.x and p.z >> 4 == c.y:
+			with_props[p.y / SECTION] = true
 	for y in range(1, SY - 1):
+		var s := y / SECTION
+		if opaque[c][s] == 0 and (s == 0 or opaque[c][s - 1] == 0) and not with_props.has(s):
+			continue
+		if opaque[c][s] == SECTION_VOL:
+			continue  # solid all through: nowhere to stand
 		for lz in CHUNK:
 			for lx in CHUNK:
 				var i := lx + CHUNK * (lz + CHUNK * y)

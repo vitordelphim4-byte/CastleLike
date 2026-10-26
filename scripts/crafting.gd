@@ -7,14 +7,15 @@ class_name Crafting
 ## Crafting tree for the player: docs/crafting.md. Keep it in sync with RECIPES.
 
 const STATIONS := {
-	"kiln": {"name": "Carvoaria", "info": "Queima madeira devagar, sem chama aberta, até virar carvão."},
+	"kiln": {"name": "Carvoaria", "info": "Forno de barro em cúpula: queima madeira abafada até virar carvão."},
 	"furnace": {"name": "Fornalha", "info": "Funde minério com carvão em barras de metal."},
 }
 # in / out: resource -> amount per batch. time: seconds of work at the station per batch.
 const RECIPES := {
 	"charcoal": {"name": "Carvão", "station": "kiln", "in": {"wood": 3}, "out": {"charcoal": 3}, "time": 12.0},
-	"iron_bar": {"name": "Barra de ferro", "station": "furnace", "in": {"iron_ore": 2, "charcoal": 2},
-		"out": {"iron": 2}, "time": 15.0},
+	# Ores smelt 1:1: 1 ore + 1 charcoal -> 1 bar (harder ores may cost more later).
+	"iron_bar": {"name": "Barra de ferro", "station": "furnace", "in": {"iron_ore": 1, "charcoal": 1},
+		"out": {"iron": 1}, "time": 8.0},
 }
 const MODES := ["off", "forever", "until"]
 const MODE_NAMES := {"off": "Desligado", "forever": "Repetir sempre", "until": "Fazer até ter"}

@@ -2,7 +2,8 @@ extends SceneTree
 ## Run: godot --headless --path . --fixed-fps 60 -s tests/test_crafting.gd
 ## Crafting chain: kiln turns wood into charcoal (bill "until 3"), furnace turns iron ore +
 ## charcoal into iron bars (bill "forever"), villagers with only Crafting enabled fetch, work and
-## haul. Also: the world generator makes iron ore, a demolished station leaves Game.stations.
+## haul. Also: the world generator makes iron ore, an interrupted crafter walks the ingredients back,
+## a demolished station leaves Game.stations.
 
 var failed := false
 
@@ -16,7 +17,7 @@ func _initialize() -> void:
 	var ore := 0
 	for cx in range(-6, 7, 2):
 		for cz in range(-6, 7, 2):
-			ore += Array(w.gen.generate(cx, cz, 16, 64).blocks).count(World.IRON_ORE)
+			ore += Array(w.gen.generate(cx, cz, 16, World.SY).blocks).count(World.IRON_ORE)
 	_check(ore > 0, "world has iron ore: %d blocks" % ore)
 
 	var s := Vector3i(game.stockpile.floor())
@@ -45,6 +46,26 @@ func _initialize() -> void:
 	_check(done, "iron bars made: stock %s" % game.stock)
 	_check(game.stock.iron_ore == 0, "ore used up: %d" % game.stock.iron_ore)
 	_check(game.stock.wood <= 3, "wood burnt into charcoal: %d left" % game.stock.wood)
+
+	# Interrupted with ingredients in hand: walks them back, nothing appears in the stockpile by itself.
+	for wk in get_nodes_in_group("workers"):
+		for work in wk.priorities:
+			wk.priorities[work] = 0
+	var crafter = get_nodes_in_group("workers")[0]
+	await process_frame
+	var ore_before: int = game.stock.iron_ore
+	crafter.job_kind = "craft"
+	crafter.job_cell = furnace
+	crafter.held = {"iron_ore": 2}
+	crafter._drop_job()
+	_check(crafter.returns == {"iron_ore": 2} and game.stock.iron_ore == ore_before, "ingredients still in hand, not teleported")
+	var back := false
+	for frame in 1500:
+		await process_frame
+		if game.stock.iron_ore == ore_before + 2:
+			back = true
+			break
+	_check(back and crafter.returns.is_empty() and crafter.carrying == "", "ingredients walked back to the stockpile")
 
 	w.remove_prop(kiln)
 	_check(game.station(kiln).is_empty() and not game.stations.has(kiln), "demolished kiln leaves the station list")

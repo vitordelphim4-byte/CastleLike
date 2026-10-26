@@ -31,14 +31,22 @@ ambient_light_energy = 0.55
 tonemap_mode = 2
 ssao_enabled = true
 glow_enabled = true
-glow_intensity = 0.3
+glow_intensity = 0.5
+glow_bloom = 0.08
 fog_enabled = true
 fog_light_color = Color(0.72, 0.84, 0.95, 1)
 fog_mode = 1
 fog_density = 1.0
 fog_sky_affect = 0.0
-fog_depth_begin = 75.0
-fog_depth_end = 135.0
+fog_depth_begin = 85.0
+fog_depth_end = 155.0
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.004
+volumetric_fog_albedo = Color(0.95, 0.97, 1, 1)
+volumetric_fog_anisotropy = 0.6
+volumetric_fog_length = 80.0
+adjustment_enabled = true
+adjustment_saturation = 1.12
 
 [node name="Main" type="Node3D"]
 script = ExtResource("0_main")

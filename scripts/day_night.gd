@@ -24,6 +24,45 @@ var keys := [  # var: slice() is not allowed in a const
 
 @onready var env: Environment = get_node("../WorldEnvironment").environment
 @onready var sky: ProceduralSkyMaterial = env.sky.sky_material
+# Floating motes around the camera focus: pollen by day, fireflies at night (enchanted-forest mood).
+@onready var pollen := _motes(Color(1.0, 0.95, 0.7), 0.0, 0.05, 160)
+@onready var fireflies := _motes(Color(0.75, 1.0, 0.35), 4.0, 0.12, 70)
+
+
+func _motes(col: Color, glow: float, size: float, amount: int) -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.amount = amount
+	p.lifetime = 8.0
+	p.preprocess = 8.0
+	p.local_coords = false  # motes stay put in the world while the camera moves
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	p.emission_box_extents = Vector3(22, 4, 22)
+	p.position.y = 3
+	p.direction = Vector3.UP
+	p.spread = 180
+	p.gravity = Vector3.ZERO
+	p.initial_velocity_min = 0.1
+	p.initial_velocity_max = 0.4
+	var fade := Curve.new()  # fade in and out instead of popping
+	fade.add_point(Vector2(0, 0))
+	fade.add_point(Vector2(0.2, 1))
+	fade.add_point(Vector2(0.8, 1))
+	fade.add_point(Vector2(1, 0))
+	p.scale_amount_curve = fade
+	var q := QuadMesh.new()
+	q.size = Vector2.ONE * size
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	m.albedo_color = col
+	if glow > 0:  # bright enough to bloom
+		m.emission_enabled = true
+		m.emission = col
+		m.emission_energy_multiplier = glow
+	q.material = m
+	p.mesh = q
+	get_node("../CameraRig").add_child.call_deferred(p)
+	return p
 
 
 func _process(_delta: float) -> void:
@@ -52,5 +91,8 @@ func _process(_delta: float) -> void:
 	light_energy = lerpf(k0[4], k1[4], f)
 	env.ambient_light_color = k0[5].lerp(k1[5], f)
 	env.ambient_light_energy = lerpf(k0[6], k1[6], f)
+	var night := t < 0.24 or t > 0.76
+	pollen.emitting = not night
+	fireflies.emitting = night
 	if Game.world:
 		Game.world.water_material.set_shader_parameter("daylight", clampf(env.ambient_light_energy / 0.55, 0, 1))

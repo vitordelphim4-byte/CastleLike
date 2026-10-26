@@ -1,18 +1,21 @@
 extends SceneTree
-## Run (needs a window, not --headless): godot --path . -s tests/screenshot.gd -- <out.png> [distance] [mode] [time_of_day]
+## Run (needs a window, not --headless): godot --path . -s tests/screenshot.gd -- <out.png> [distance] [mode] [time_of_day] [seed]
 ## Starts the game with all workers chopping, waits, saves a screenshot.
 
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var out := args[0] if args.size() > 0 else "user://shot.png"
-	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof"] else "res://main.tscn"
-	root.add_child(load(scene).instantiate())
+	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof", "xray", "hill", "hill_cut", "hill_cave", "tower", "tower0", "tower1", "tower_low"] else "res://main.tscn"
 	var game := root.get_node("Game")
+	if args.size() > 4:
+		game.start_seed = int(args[4])
+	root.add_child(load(scene).instantiate())
 	await process_frame
 	if args.size() > 3:
 		game.time_of_day = float(args[3])
-	var trees: Dictionary = game.add_order("wood", Rect2i(0, 0, 64, 64))
+	var home := Vector2i(int(game.stockpile.x), int(game.stockpile.z))
+	var trees: Dictionary = game.add_order("wood", Rect2i(home - Vector2i(32, 32), Vector2i(64, 64)))
 	trees.marker.visible = false  # whole-map area would clutter the shot
 	var workers := root.get_tree().get_nodes_in_group("workers")
 	if args.size() > 2 and args[2] == "work":
@@ -73,13 +76,26 @@ func _initialize() -> void:
 		for w in workers:
 			for work in w.priorities:
 				w.priorities[work] = 0
+	if args.size() > 2 and args[2] == "xray":  # villagers walled in a stone hill: x-ray + outlines
+		var s := Vector3i(game.stockpile.floor())
+		var y: int = game.world.top_at(s.x, s.z)
+		for x in range(s.x - 4, s.x + 5):
+			for z in range(s.z - 2, s.z + 7):
+				for h in 4:
+					if not (h < 2 and absi(x - s.x) < 3 and z >= s.z + 1 and z <= s.z + 3):
+						game.world.set_block(Vector3i(x, y + h, z), World.STONE)
+		for i in workers.size():
+			for work in workers[i].priorities:
+				workers[i].priorities[work] = 0
+			workers[i].position = Vector3(s.x - 1.5 + i * 0.8, y, s.z + 2.5)
+		workers[0].selected = true
 	var rig: Node3D = root.get_node("Main/CameraRig")
 	var view_spot = null
-	if args.size() > 2 and args[2] == "world":  # look at a mountain with water nearby
+	if args.size() > 2 and args[2] in ["world", "cut", "deep"]:  # look at a mountain with water nearby
 		var gen: WorldGen = game.world.gen
 		var best := -1.0
-		for x in range(-160, 161, 8):
-			for z in range(-160, 161, 8):
+		for x in range(home.x - 160, home.x + 161, 8):
+			for z in range(home.y - 160, home.y + 161, 8):
 				if gen.biome(x, z, int(gen.height(x, z))) != "mountain":
 					continue
 				for a in 12:
@@ -87,12 +103,34 @@ func _initialize() -> void:
 					var wx := x + int(d.x)
 					var wz := z + int(d.y)
 					if gen.biome(wx, wz, int(gen.height(wx, wz))) == "water":
-						var score := 200.0 - Vector2(x, z).length()
+						var score := 200.0 - Vector2(x - home.x, z - home.y).length()
 						if score > best:
 							best = score
 							view_spot = Vector3((x + wx) / 2.0, 0, (z + wz) / 2.0)
 		if view_spot == null:
-			view_spot = Vector3.ZERO
+			view_spot = game.stockpile
+	if args.size() > 2 and args[2].begins_with("tower"):  # debug 2-floor building, floor view
+		var panel: Node = null
+		for n in root.get_node("Main").get_children():
+			if n.has_method("_view_tower"):
+				panel = n
+		match args[2]:
+			"tower": panel._go_tower()
+			"tower0": panel._view_tower(3)
+			"tower1": panel._view_tower(7)
+			"tower_low": panel._view_tower(1)
+		view_spot = rig.position
+	if args.size() > 2 and args[2].begins_with("hill"):  # debug hill (Phase 9), via the debug panel
+		var panel: Node = null
+		for n in root.get_node("Main").get_children():
+			if n.has_method("_villager_in"):
+				panel = n
+		panel._villager_in()
+		if args[2] == "hill_cut":
+			panel._dig_tunnel()
+		elif args[2] == "hill_cave":
+			panel._cut(6)
+		view_spot = rig.position
 	rig.distance = float(args[1]) if args.size() > 1 else 14.0
 	if rig.distance < 8:
 		rig.pitch = deg_to_rad(25)
@@ -105,5 +143,10 @@ func _initialize() -> void:
 		else:
 			rig.position = game.stockpile + offsets.get(args[2], Vector3.ZERO) if args.size() > 2 else workers[0].position
 		rig._update_cam()
+	if args.size() > 2 and args[2] in ["cut", "deep"]:  # slice the ground 4 layers under the camera / at the deepslate edge
+		var under: int = game.world.top_at(floori(rig.position.x), floori(rig.position.z)) - 4
+		game.world.set_cut(under if args[2] == "cut" else WorldGen.DEEP_TOP + 1)
+		for i in 30:
+			await process_frame
 	root.get_viewport().get_texture().get_image().save_png(out)
 	quit()

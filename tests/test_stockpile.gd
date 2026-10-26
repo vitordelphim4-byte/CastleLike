@@ -15,6 +15,9 @@ func _initialize() -> void:
 	var start: Dictionary = game.zones[0]
 	_check(start.tiles.size() == 9, "starting zone has 9 tiles: %d" % start.tiles.size())
 	var tiles: int = start.tiles.size()
+	for c: Vector3i in start.tiles:  # clear the starting food: this test counts tiles from empty
+		if start.tiles[c].n > 0:
+			game.withdraw(c, start.tiles[c].kind, start.tiles[c].n)
 
 	_check(game.store("wood", per + 1) == 0 and game.zone_used(start) == 2, "11 wood use 2 tiles")
 	_check(game.store("stone", 3) == 0 and game.zone_used(start) == 3, "stone takes its own tile")
@@ -26,7 +29,7 @@ func _initialize() -> void:
 	for o in get_nodes_in_group("workers"):
 		for k in o.priorities:
 			o.priorities[k] = 0
-	game.add_order("wood", Rect2i(-48, -48, 96, 96))
+	game.add_order("wood", Rect2i(int(game.stockpile.x) - 48, int(game.stockpile.z) - 48, 96, 96))
 	w.priorities.wood = 1
 	_check(not w._find_job(), "no woodcutting with a full stock")
 	w._set_cargo("wood", 1)
@@ -45,10 +48,11 @@ func _initialize() -> void:
 	# Second zone, then remove the first: goods move over (what fits).
 	var s := Vector3i(game.stockpile.floor())
 	var z2: Dictionary = game.add_zone(Rect2i(s.x + 4, s.z - 6, 3, 3))
-	var total: int = game.stock.wood + game.stock.stone
+	var wood: int = game.stock.wood
 	game.remove_zone(start)
-	_check(game.zones.size() == 1 and game.stock.wood + game.stock.stone == mini(total, per * 8 + 16), \
-		"goods moved to zone 2: %s" % game.stock)
+	var room: int = per * (z2.tiles.size() - 1)  # one tile goes to the 3 stone
+	_check(game.zones.size() == 1 and game.stock.stone == 3 and game.stock.wood == mini(wood, room), \
+		"goods moved to zone 2 (%d tiles): %s" % [z2.tiles.size(), game.stock])
 
 	var tile: Vector3i = z2.tiles.keys()[0]
 	var cells: Dictionary = game.dig_cells(Rect2i(tile.x, tile.z, 1, 1), 2)

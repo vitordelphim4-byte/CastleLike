@@ -11,7 +11,7 @@ func _initialize() -> void:
 	var game := root.get_node("Game")
 	await process_frame
 	var s := Vector3i(game.stockpile.floor())
-	game.add_order("wood", Rect2i(0, 0, 64, 64))
+	game.add_order("wood", Rect2i(s.x - 32, s.z - 32, 64, 64))
 	var dig: Dictionary = game.add_order("dig", Rect2i(s.x - 1, s.z + 5, 3, 3))
 	var w = root.get_tree().get_nodes_in_group("workers")[0]  # untyped: Worker can't compile before autoloads in -s mode
 
