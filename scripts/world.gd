@@ -50,6 +50,10 @@ const NAV_ID_OFFSET := 1 << 20
 # in direction k (side, other side, diagonal), for blocks away from the column's edges.
 static var AO_OFF: Array[PackedInt32Array] = []
 const XRAY_MAX := 9  # matches view_clip.gdshaderinc
+# Lake / sea surface shortcut (_still_surface): the 8 cells around (and the cell itself), and the
+# corners every such cell gets.
+const STILL_OFF := [0, 1, -1, CHUNK, -CHUNK, CHUNK + 1, CHUNK - 1, -CHUNK + 1, -CHUNK - 1]
+const STILL_CORNERS := {Vector2i(0, 0): 0.88, Vector2i(1, 0): 0.88, Vector2i(0, 1): 0.88, Vector2i(1, 1): 0.88}
 
 @export var flat := false  # debug map: endless flat plain
 @export var world_seed := 0  # 0 = random each run
@@ -96,9 +100,8 @@ var xray_cursor := false:  # V: see through the ground around the mouse
 var _deep_below := {}  # Vector2i -> sections whose top is at or under this y are deep
 var fluids := Fluids.new()
 var _water_dirty := {}  # Vector3i(cx, section, cz) -> true: water mesh to rebuild
-# ponytail: sections water reached above sea level (an all-air section there isn't meshed otherwise);
-# not saved, so after loading, water in a section with no ground at all won't show until rebuilt.
-var _wet := {}
+var _full_dirty := {}  # same, whole section (water came over / left tall grass)
+var wet := {}  # Vector2i -> PackedInt32Array: water blocks per section (dry ones skip the water mesh)
 var _opened := {}  # Vector2i -> deep sections reaching above this y show (0 = all: dug into)
 var _cut_tick := 0.0
 var _offsets: Array[Vector2i] = []  # column offsets around the focus, nearest first
@@ -246,6 +249,7 @@ func set_blocks(cells: Dictionary) -> void:
 		columns[c][i] = cells[p]
 		dirty[c] = true
 		opaque[c][p.y / SECTION] += int(_opaque(cells[p])) - int(_opaque(old))
+		wet[c][p.y / SECTION] += int(is_water(cells[p])) - int(is_water(old))
 		# Sections around too: face culling and AO read across section borders.
 		for dx in [-1, 0, 1]:
 			for dy in [-1, 0, 1]:
@@ -274,13 +278,18 @@ func set_blocks(cells: Dictionary) -> void:
 func apply_water(changes: Dictionary) -> void:
 	for p: Vector3i in changes:
 		var c := Vector2i(p.x >> 4, p.z >> 4)
-		_data(c)[(p.x & 15) + CHUNK * ((p.z & 15) + CHUNK * p.y)] = changes[p]
+		var i := (p.x & 15) + CHUNK * ((p.z & 15) + CHUNK * p.y)
+		wet[c][p.y / SECTION] += int(is_water(changes[p])) - int(is_water(_data(c)[i]))
+		columns[c][i] = changes[p]
 		dirty[c] = true
-		_wet[Vector3i(c.x, p.y / SECTION, c.y)] = true
-		for d: Vector3i in [Vector3i.ZERO] + VoxelMesh.DIRS:  # neighbor sections: their faces toward p
-			var q := p + d
-			if in_bounds(q):
-				_water_dirty[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
+		for dx in [-1, 0, 1]:  # sections around: faces toward p and corner heights read across
+			for dy in [-1, 0, 1]:
+				for dz in [-1, 0, 1]:
+					var q := p + Vector3i(dx, dy, dz)
+					if in_bounds(q):
+						_water_dirty[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
+		if get_block(p + Vector3i.DOWN) == GRASS:  # tall grass drowns / grows back: full rebuild
+			_full_dirty[Vector3i(c.x, (p.y - 1) / SECTION, c.y)] = true
 		fluids.wake(p)
 	for p: Vector3i in changes:
 		_update_nav(p)
@@ -290,6 +299,12 @@ func apply_water(changes: Dictionary) -> void:
 # Queued water meshes, a few per frame.
 func _flush_water(budget_ms: float) -> void:
 	var start := Time.get_ticks_usec()
+	for key: Vector3i in _full_dirty.keys():
+		if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
+			return
+		_full_dirty.erase(key)
+		_water_dirty.erase(key)  # the full rebuild redoes the water too
+		_rebuild_section(Vector2i(key.x, key.z), key.y)
 	for key: Vector3i in _water_dirty.keys():
 		if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
 			return
@@ -337,10 +352,18 @@ func _generate(c: Vector2i) -> void:
 	columns[c] = blocks
 	var counts := PackedInt32Array()
 	counts.resize(SECTIONS)
+	var waters := PackedInt32Array()
+	waters.resize(SECTIONS)
 	for i in blocks.size():
-		if _opaque(blocks[i]):
+		var t := blocks[i]
+		if t == AIR:
+			continue
+		if is_water(t):
+			waters[i / SECTION_VOL] += 1
+		else:
 			counts[i / SECTION_VOL] += 1
 	opaque[c] = counts
+	wet[c] = waters
 	var cells := []
 	for t: Dictionary in g.trees:
 		t.amount = tree_left.get(t.cell, ResourceNode.amount_for(t))
@@ -448,7 +471,7 @@ func _rebuild_section(c: Vector2i, s: int) -> void:
 	if meshed[c][s]:
 		meshed[c][s].queue_free()
 	# All air: nothing to draw (water only lies at or below WATER_LEVEL and isn't counted as opaque).
-	var empty: bool = opaque[c][s] == 0 and s * SECTION > WorldGen.WATER_LEVEL and not _wet.has(Vector3i(c.x, s, c.y))
+	var empty: bool = opaque[c][s] == 0 and wet[c][s] == 0
 	meshed[c][s] = null if empty or _buried(c, s) else _build_section(c, s)
 	if meshed[c][s]:
 		meshed[c][s].visible = _section_visible(c, s)
@@ -483,13 +506,13 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 			for lx in CHUNK:
 				var i := lx + CHUNK * (lz + CHUNK * y)
 				var t := data[i]
-				if t == AIR or is_water(t):
+				if t == AIR or t == WATER or (t >= FLOW_1 and t <= FALLING):  # is_water, inlined: hot loop
 					continue  # water: _water_mesh
 				var p := Vector3i(c.x * CHUNK + lx, y, c.y * CHUNK + lz)
 				var inner := lx > 0 and lz > 0 and y > 0 and lx < CHUNK - 1 and lz < CHUNK - 1 and y < SY - 1
 				for k in 6:
 					var nb: int = data[i + N_OFF[k]] if inner else get_block(p + VoxelMesh.DIRS[k])
-					if nb == AIR or is_water(nb):
+					if nb == AIR or nb == WATER or (nb >= FLOW_1 and nb <= FALLING):
 						if inner and not col_props:
 							_add_inner_face(st, p, k, t, data, i)
 						else:
@@ -517,25 +540,38 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 # The water of section s, its own mesh so the water can change without rebuilding the terrain
 # (water never changes terrain faces or AO). Surface height by level.
 func _water_mesh(c: Vector2i, s: int) -> MeshInstance3D:
+	if wet[c][s] == 0:
+		return null
 	var data: PackedByteArray = columns[c]
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var faces := 0
+	var heights := {}  # cell -> surface height, shared by the corners around it
 	for y in range(s * SECTION, (s + 1) * SECTION):
 		for lz in CHUNK:
 			for lx in CHUNK:
-				var t := data[lx + CHUNK * (lz + CHUNK * y)]
-				if not is_water(t):
+				var i := lx + CHUNK * (lz + CHUNK * y)
+				var t := data[i]
+				if t != WATER and (t < FLOW_1 or t > FALLING):
 					continue
 				var p := Vector3i(c.x * CHUNK + lx, y, c.y * CHUNK + lz)
-				var h := _water_height(t, p)
+				var inner := lx > 0 and lz > 0 and y > 0 and lx < CHUNK - 1 and lz < CHUNK - 1 and y < SY - 1
+				var flow := Color(0.5, 0.5, 1.0 if t == FALLING else 0.0)  # see _water_flow
+				var corners := {}  # Vector2i(0..1, 0..1) -> height
+				if inner and t == WATER and _still_surface(data, i):
+					corners = STILL_CORNERS  # lake / sea: flat, no current
 				for k in 6:
+					var nb: int = data[i + N_OFF[k]] if inner else get_block(p + VoxelMesh.DIRS[k])
+					if nb != AIR:
+						continue  # only faces toward air (water next to water is one surface)
 					var n := VoxelMesh.DIRS[k]
-					var nb := get_block(p + n)
-					# Faces toward air; and the top unless more water sits on it.
-					if nb == AIR or (n == Vector3i.UP and not is_water(nb)) or (k < 2 or k > 3) and is_water(nb) 							and _water_height(nb, p + n) < h - 0.01:
-						_add_water_face(st, p, n, h)
-						faces += 1
+					if corners.is_empty():
+						for a in 2:
+							for b in 2:
+								corners[Vector2i(a, b)] = _corner_height(p, a, b, heights)
+						flow = _water_flow(p, t, heights)
+					_add_water_face(st, p, n, corners, flow)
+					faces += 1
 	if faces == 0:
 		return null
 	st.set_material(water_material)
@@ -546,10 +582,59 @@ func _water_mesh(c: Vector2i, s: int) -> MeshInstance3D:
 	return mi
 
 
+# Source with sources all around and nothing on top of any of them: open lake or sea surface.
+func _still_surface(data: PackedByteArray, i: int) -> bool:
+	for o in STILL_OFF:
+		if data[i + o] != WATER or data[i + o + CHUNK * CHUNK] != AIR:
+			return false
+	return true
+
+
 func _water_height(t: int, p: Vector3i) -> float:
 	if t == FALLING or is_water(get_block(p + Vector3i.UP)):
 		return 1.0
 	return 0.88 if t == WATER else 0.1 + 0.11 * water_level(t)
+
+
+# Height of the surface at corner (a, b) of cell p (Minecraft style): the average of the water
+# cells sharing that corner, or the full block if any of them has water on top (a falling column).
+# Neighbors share corners, so the surface slopes between levels with no steps or gaps.
+func _corner_height(p: Vector3i, a: int, b: int, heights: Dictionary) -> float:
+	var sum := 0.0
+	var n := 0
+	for dx in [a - 1, a]:
+		for dz in [b - 1, b]:
+			var q := p + Vector3i(dx, 0, dz)
+			if not heights.has(q):
+				var t := get_block(q)
+				heights[q] = _water_height(t, q) if is_water(t) else -1.0
+			var h: float = heights[q]
+			if h >= 1.0:
+				return 1.0
+			if h >= 0.0:
+				sum += h
+				n += 1
+	return sum / n
+
+
+# Which way p's water runs, packed in a vertex color for the shader: r, g = x, z direction
+# (0.5 = none), b = 1 for a falling column. Downhill toward lower water and toward drops at the edge.
+func _water_flow(p: Vector3i, t: int, heights: Dictionary) -> Color:
+	if t == FALLING:
+		return Color(0.5, 0.5, 1.0)
+	var h: float = heights.get(p, _water_height(t, p))
+	var v := Vector2.ZERO
+	for d in H_DIRS:
+		var q := p + d
+		var tq := get_block(q)
+		if is_water(tq):
+			v += Vector2(d.x, d.z) * (h - _water_height(tq, q))
+		elif tq == AIR and not is_solid(q + Vector3i.DOWN):
+			v += Vector2(d.x, d.z) * h  # spills over the edge
+	if t == WATER and v.length() < 0.3:
+		return Color(0.5, 0.5, 0.0)  # still pond
+	v = v.normalized() if v.length() > 0.001 else Vector2.ZERO
+	return Color(0.5 + v.x * 0.5, 0.5 + v.y * 0.5, 0.0)
 
 
 # Rebuilds only the water of section s (the terrain didn't change).
@@ -712,24 +797,33 @@ func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedB
 		var a := data[i + o[j * 3]]
 		var b := data[i + o[j * 3 + 1]]
 		var d := data[i + o[j * 3 + 2]]
-		var s1 := a != AIR and not is_water(a)
-		var s2 := b != AIR and not is_water(b)
-		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(d != AIR and not is_water(d))
+		# Solid = not air and not water (is_water inlined: 12 lookups per face).
+		var s1 := a != AIR and a != WATER and (a < FLOW_1 or a > FALLING)
+		var s2 := b != AIR and b != WATER and (b < FLOW_1 or b > FALLING)
+		var s3 := d != AIR and d != WATER and (d < FLOW_1 or d > FALLING)
+		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(s3)
 		cols.append(Color(COLORS[t], AO_LIGHT[open]))
 	VoxelMesh.add_face(st, Vector3(p), Vector3(VoxelMesh.DIRS[k]), cols, 1.0, Vector2(t, 0))
 
 
-# Water face of cell p, the cell filled up to height h (sources sit a little below the block top).
-func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i, h: float) -> void:
+# Water face of cell p toward air: the top edge follows the surface's corner heights
+# (_corner_height); flow goes to the shader in the vertex color (_water_flow).
+func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i, corners: Dictionary, flow: Color) -> void:
 	var ax := VoxelMesh.axes(Vector3(n))
 	var c := Vector3(p) + Vector3.ONE * 0.5 + Vector3(n) * 0.5
 	var q: Array[Vector3] = []
 	for k in VoxelMesh.CORNERS:
 		var v := c + (ax[0] * k.x + ax[1] * k.y) * 0.5
-		v.y = p.y + (v.y - p.y) * h
+		if v.y > p.y + 0.5:  # top edge: the shared corner height
+			v.y = p.y + corners[Vector2i(roundi(v.x - p.x), roundi(v.z - p.z))]
 		q.append(v)
-	st.set_normal(Vector3(n))
-	st.set_color(Color.WHITE)
+	var normal := Vector3(n)
+	if n == Vector3i.UP:  # sloped surface: real normal for the light
+		normal = (q[1] - q[0]).cross(q[3] - q[0]).normalized()
+		if normal.y < 0:
+			normal = -normal
+	st.set_normal(normal)
+	st.set_color(flow)
 	for i in [0, 1, 2, 0, 2, 3]:
 		st.add_vertex(q[i])
 

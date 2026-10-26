@@ -246,10 +246,19 @@ Regras (Minecraft, menos a fonte infinita):
   cria fonte entre duas, cavar ao lado de um lago inunda).
 - Fica para a 10e2: grama aparecendo através da água rasa e transição entre níveis vizinhos.
 
-#### 10e2 — Visual da água corrente
-- Altura da superfície por nível, com cantos suavizados (média dos vizinhos, como no Minecraft).
-- Cascatas como colunas.
-- Textura que corre na direção do fluxo.
+#### 10e2 — Visual da água corrente ✅ (feito 2026-10-26)
+- Superfície contínua: a altura de cada canto é a média das células de água que o compartilham, e
+  vai ao topo se alguma delas tiver água em cima (cascata). Vizinhos dividem cantos, então não há
+  degrau nem fresta. Faces só voltadas para o ar, e o topo inclinado tem normal real para a luz.
+- Correnteza: `_water_flow` calcula a direção (para a água mais baixa e para a queda na borda) e
+  manda no vértice. O shader desenha listras correndo nessa direção, e as cascatas ganham listras
+  descendo. Lago e mar parados ficam lisos.
+- Tufos de grama somem quando a água cobre a grama e voltam quando ela seca (seção inteira refeita,
+  em fila).
+- Desempenho: água contada por seção (`wet`, como `opaque`), e seções secas pulam a malha de água.
+  Atalho para superfície de lago/mar. `is_water` escrito por extenso nos laços quentes, porque a
+  chamada de função custava ~25 ms por coluna. Malhas 75 ms e explorar 90 ms por coluna, como antes
+  da água.
 
 #### 10e3 — Aldeões e água
 - Andar em água de 1 bloco (pés na água, cabeça no ar, chão embaixo): permitido e mais lento,
