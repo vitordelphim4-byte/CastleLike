@@ -16,6 +16,7 @@ enum { IDLE, MANUAL, TO_STOCK, TO_WORK, WORKING, FETCH, GATHER, TO_EAT, EATING }
 const HUNGRY := 0.3
 const EAT_TIME := 3.0
 const STARVING_SLOWDOWN := 0.5
+const WADE_SLOWDOWN := 0.5  # walking with the feet in water
 const BOW_RANGE := 10.0  # hunters shoot from up to this far (farther than deer notice them)
 const HIT_CHANCE := 0.75
 const ARROW_SPEED := 25.0
@@ -226,6 +227,14 @@ func _settle() -> void:
 	var feet := Vector3i(position.floor())
 	if world.is_solid(feet):
 		position.y = feet.y + 1
+	elif World.is_water(world.get_block(feet)) and not world.wadeable(feet):
+		# Swimming (deep water, or nothing under it): float up, then swim to the nearest footing.
+		if World.is_water(world.get_block(feet + Vector3i.UP)):
+			position.y = feet.y + 1
+		else:
+			var to := world.nearest_footing(position)
+			if to != Vector3.INF:
+				path = PackedVector3Array([to])
 	elif feet.y > 0 and not world.is_solid(feet + Vector3i.DOWN) and not world.is_ladder(feet) \
 			and not world.is_roof(feet):
 		position.y = feet.y - 1
@@ -1066,6 +1075,8 @@ func _part(part: String, pos: Vector3, parent: Node3D = self) -> MeshInstance3D:
 func _walk(delta: float) -> void:
 	var to := path[0] - position
 	var step := speed * delta * (STARVING_SLOWDOWN if food <= 0 else 1.0)
+	if World.is_water(world.get_block(Vector3i(position.floor()))):
+		step *= WADE_SLOWDOWN
 	if to.length() <= step:
 		position = path[0]
 		path.remove_at(0)

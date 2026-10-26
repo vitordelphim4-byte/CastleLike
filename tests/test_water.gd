@@ -3,6 +3,8 @@ extends SceneTree
 ## Phase 10e1, Minecraft water rules on the flat debug map, stepping Fluids by hand:
 ## spreads 7 blocks losing a level each, dries up when its source goes, falls before spreading,
 ## heads for a nearby drop, never makes a new source between two, floods a hole dug beside a pool.
+## 10e3: shallow water (1 deep) is in the nav at a higher cost, deep water isn't, and a villager
+## dropped into deep water swims out to somewhere it can stand.
 
 var world: World
 var y := 0
@@ -75,6 +77,37 @@ func _initialize() -> void:
 	_steps(2)
 	if world.get_block(wall) != World.FLOW_7:
 		return _fail("digging beside the pool: hole has %d, want flowing 7" % world.get_block(wall))
+	# Shallow trench (1 deep) and deep trench (2 deep), full of still water.
+	var sh := o + Vector3i(20, y - 1, 20)
+	var dp := o + Vector3i(20, y - 2, 26)
+	var trenches := {}
+	for x in 6:
+		trenches[sh + Vector3i(x, 0, 0)] = World.WATER
+		for k in 2:
+			for z in 3:
+				trenches[dp + Vector3i(x, k, z)] = World.WATER
+	_place(trenches)
+	_steps(3)
+	var wade := sh + Vector3i(2, 0, 0)
+	if not world.astar.has_point(world.idx(wade)) or world.astar.get_point_weight_scale(world.idx(wade)) != World.WADE_COST:
+		return _fail("shallow water should be in the nav, at WADE_COST")
+	for k in 2:
+		if world.astar.has_point(world.idx(dp + Vector3i(2, k, 1))):
+			return _fail("deep water (layer %d) should not be in the nav" % k)
+	var wk = root.get_tree().get_nodes_in_group("workers")[0]
+	for work in wk.priorities:
+		wk.priorities[work] = 0
+	wk.path = PackedVector3Array()
+	wk.position = Vector3(dp + Vector3i(2, 0, 1)) + Vector3(0.5, 0, 0.5)
+	for frame in 600:
+		await process_frame
+		var here := Vector3i(wk.position.floor())
+		if wk.path.is_empty() and (world.walkable(here) or world.wadeable(here)):
+			print("swam out in %d frames to %s" % [frame, here])
+			break
+	var at := Vector3i(wk.position.floor())
+	if not (world.walkable(at) or world.wadeable(at)):
+		return _fail("villager still in deep water at %s" % at)
 	print("test_water OK")
 	quit()
 

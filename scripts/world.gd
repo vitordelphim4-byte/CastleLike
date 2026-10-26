@@ -50,6 +50,7 @@ const NAV_ID_OFFSET := 1 << 20
 # in direction k (side, other side, diagonal), for blocks away from the column's edges.
 static var AO_OFF: Array[PackedInt32Array] = []
 const XRAY_MAX := 9  # matches view_clip.gdshaderinc
+const WADE_COST := 3.0  # A* weight of a shallow-water cell: paths go around when it's cheap to
 # Lake / sea surface shortcut (_still_surface): the 8 cells around (and the cell itself), and the
 # corners every such cell gets.
 const STILL_OFF := [0, 1, -1, CHUNK, -CHUNK, CHUNK + 1, CHUNK - 1, -CHUNK + 1, -CHUNK - 1]
@@ -1049,6 +1050,15 @@ func raycast_cells(from: Vector3, dir: Vector3, hit: Callable, max_dist := 300.0
 # --- Navigation ---
 
 # Feet cell: air (not water) for body + head, solid underneath.
+# Shallow water: water at the feet only (head in the air), ground underneath. Villagers wade
+# through it, slower; deeper water isn't in the nav at all.
+func wadeable(p: Vector3i) -> bool:
+	var head := p + Vector3i.UP
+	return is_water(get_block(p)) and not is_solid(p) and not is_water(get_block(head)) and not is_solid(head) \
+		and is_solid(p + Vector3i.DOWN)
+
+
+# Dry ground to stand on (spawns, zones and fields want this; the nav also takes wadeable).
 func walkable(p: Vector3i) -> bool:
 	return not is_solid(p) and not is_water(get_block(p)) and not is_solid(p + Vector3i.UP) \
 		and is_solid(p + Vector3i.DOWN)
@@ -1061,6 +1071,12 @@ func set_blocked(p: Vector3i, on: bool) -> void:
 		blocked.erase(p)
 	if in_bounds(p) and astar.has_point(idx(p)):
 		astar.set_point_disabled(idx(p), on)
+
+
+# Nearest place to stand (dry or wading) around pos, for someone swimming; INF if none.
+func nearest_footing(pos: Vector3) -> Vector3:
+	var id := _nearest_point(pos)
+	return astar.get_point_position(id) if id != -1 else Vector3.INF
 
 
 # Blocked target cells are skipped, so the path ends next to them.
@@ -1117,8 +1133,9 @@ func _build_nav(c: Vector2i) -> void:
 		for lz in CHUNK:
 			for lx in CHUNK:
 				var i := lx + CHUNK * (lz + CHUNK * y)
-				if data[i] != AIR:
-					continue
+				var t := data[i]
+				if t != AIR and t != WATER and (t < FLOW_1 or t > FALLING):
+					continue  # solid (air and shallow water can be stood in)
 				var p := Vector3i(c.x * CHUNK + lx, y, c.y * CHUNK + lz)
 				var below := data[i - CHUNK * CHUNK]
 				if not _opaque(below) and not props.has(p) and not props.has(p + Vector3i.DOWN):
@@ -1149,10 +1166,11 @@ func _add_nav_point(p: Vector3i) -> bool:
 	if not in_bounds(p):
 		return false
 	var hanging := (is_ladder(p) or is_roof(p)) and not is_solid(p) and not is_solid(p + Vector3i.UP)
-	if not hanging and not walkable(p):
+	var wade := not hanging and wadeable(p)
+	if not hanging and not wade and not walkable(p):
 		return false
-	# Slabs and stairs: you stand on top of them, half a block up.
-	astar.add_point(idx(p), Vector3(p) + Vector3(0.5, prop_shape(p).get("floor", 0.0), 0.5))
+	# Slabs and stairs: you stand on top of them, half a block up. Wading costs more.
+	astar.add_point(idx(p), Vector3(p) + Vector3(0.5, prop_shape(p).get("floor", 0.0), 0.5), WADE_COST if wade else 1.0)
 	if blocked.has(p):
 		astar.set_point_disabled(idx(p))
 	return true

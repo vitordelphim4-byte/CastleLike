@@ -260,11 +260,18 @@ Regras (Minecraft, menos a fonte infinita):
   chamada de função custava ~25 ms por coluna. Malhas 75 ms e explorar 90 ms por coluna, como antes
   da água.
 
-#### 10e3 — Aldeões e água
-- Andar em água de 1 bloco (pés na água, cabeça no ar, chão embaixo): permitido e mais lento,
-  com peso maior no A*. Água de 2+ blocos: fora da navegação.
-- Inundação recalcula a navegação local (como já acontece quando um bloco muda).
-- Aldeão pego por água funda sai para o lado seco mais próximo.
+#### 10e3 — Aldeões e água ✅ (feito 2026-10-26)
+- `World.wadeable(p)`: água nos pés, cabeça no ar, chão embaixo. Entra na navegação com peso
+  `WADE_COST` (3) no A*, então o caminho contorna quando o desvio é curto. Água de 2+ blocos fica
+  fora da navegação. `walkable` continua sendo chão seco: estoques, plantações e animais novos não
+  nascem na água.
+- Aldeão com os pés na água anda na metade da velocidade.
+- Em água funda ou sem chão embaixo, o aldeão flutua até a superfície e nada até o ponto mais próximo
+  onde dá para ficar (`World.nearest_footing`).
+- Inundação: cada célula de água que muda atualiza a navegação em volta (já vinha da 10e1).
+- Teste: `test_water.gd` (água rasa na navegação com peso, funda fora, aldeão sai da água funda
+  em ~1 s).
+- Animais andam na água rasa na velocidade normal (ponytail: mais lento quando importar).
 
 #### 10e4 — Rios com correnteza
 - Refazer os rios: nascem nas serras e descem em degraus até lagos e mar, com água corrente no
