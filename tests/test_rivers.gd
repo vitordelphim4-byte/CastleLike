@@ -2,7 +2,9 @@ extends SceneTree
 ## Run: godot --headless --path . -s tests/test_rivers.gd
 ## Phase 10e4: mixed rivers. In 3 seeds, within 300 blocks of the spawn: rivers up high are narrow
 ## streams and rivers at sea level are wide; streams have a current; their water stays in its bed
-## (few surface cells open to the air on the side); no river water in the start area.
+## (few surface cells open to the air on the side); no river water in the start area. Waterfalls:
+## seed 1000 has river falls (falling columns 4+ tall) near the spawn, and a cave spring, once the
+## water runs on a real World, falls to the hall floor and spreads there.
 
 const R := 300
 
@@ -38,6 +40,49 @@ func _initialize() -> void:
 		print("  river surface open to the air on a side: %.1f%%" % (open * 100.0))
 		if open > 0.2:
 			return _fail("seed %d: river water spilling out of its bed (%.0f%%)" % [sd, open * 100.0])
+	var g := WorldGen.new(1000)
+	var home := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
+	var tallest := 0
+	var spring := Vector3i(-1, -1, -1)
+	for cx in range(-10, 11):
+		for cz in range(-10, 11):
+			var res := g.generate(home.x + cx, home.y + cz, 16, World.SY)
+			if spring.y < 0 and not res.springs.is_empty():
+				spring = res.springs[0]
+			for i in 256:
+				var run := 0
+				for y in range(WorldGen.WATER_LEVEL, World.SY):
+					run = run + 1 if res.blocks[i + 256 * y] == World.FALLING else 0
+					tallest = maxi(tallest, run)
+	print("tallest river fall: %d falling blocks" % tallest)
+	if tallest < 4:
+		return _fail("no river waterfall 4+ tall near the spawn")
+	if spring.y < 0:
+		return _fail("no cave spring near the spawn")
+	var w := World.new()
+	w.world_seed = 1000
+	root.add_child(w)
+	if w.gen == null:
+		w.gen = WorldGen.new(1000)
+	w.fluids.world = w
+	w.load_area(Vector3(spring), 1, false)
+	w.fluids.wake(spring)
+	for k in 80:
+		w.fluids.step()
+	var fall := 0
+	var y := spring.y - 1
+	while World.is_water(w.get_block(Vector3i(spring.x, y, spring.z))):
+		fall += 1
+		y -= 1
+	var pool := 0
+	for dx in range(-7, 8):
+		for dz in range(-7, 8):
+			for dy in range(-8, 2):  # the floor isn't flat: the water runs on down
+				if dx != 0 or dz != 0:
+					pool += int(World.is_water(w.get_block(Vector3i(spring.x + dx, y + dy, spring.z + dz))))
+	print("cave waterfall: %d blocks down, %d water cells spread around its foot" % [fall, pool])
+	if fall < WorldGen.CAVE_FALL_MIN or pool < 5:
+		return _fail("cave spring at %s: fell %d, pool %d" % [spring, fall, pool])
 	print("test_rivers OK")
 	quit()
 

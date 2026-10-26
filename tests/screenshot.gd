@@ -141,6 +141,26 @@ func _initialize() -> void:
 		elif args[2] == "hill_cave":
 			panel._cut(6)
 		view_spot = rig.position
+	var cut_at := -1
+	if args.size() > 2 and args[2] in ["fall", "cavefall"]:  # nearest river waterfall / cave waterfall (cut into its hall)
+		var g: WorldGen = game.world.gen
+		var hc := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
+		for r in range(1, 14):
+			for cx in range(-r, r + 1):
+				for cz in range(-r, r + 1):
+					if view_spot != null or maxi(absi(cx), absi(cz)) != r:
+						continue
+					var res := g.generate(hc.x + cx, hc.y + cz, 16, World.SY)
+					if args[2] == "cavefall" and not res.springs.is_empty():
+						var sp: Vector3i = res.springs[0]
+						view_spot = Vector3(sp.x, 0, sp.z)
+						cut_at = sp.y
+					elif args[2] == "fall":
+						for i in 256:
+							for y in range(WorldGen.WATER_LEVEL, World.SY):
+								if view_spot == null and res.blocks[i + 256 * y] == World.FALLING:
+									view_spot = Vector3((hc.x + cx) * 16 + i % 16, 0, (hc.y + cz) * 16 + i / 16)
+		game.world.fluids.speed = 10.0
 	if args.size() > 2 and args[2] in ["river_high", "river_low"]:  # nearest stream up high / river at sea level (10e4)
 		var g: WorldGen = game.world.gen
 		var best := INF
@@ -178,6 +198,10 @@ func _initialize() -> void:
 		var under: int = game.world.top_at(floori(rig.position.x), floori(rig.position.z)) - (24 if args[2] == "caves" else 4)
 		game.world.set_cut(WorldGen.DEEP_TOP + 1 if args[2] == "deep" else under)
 		for i in 150:  # deep sections stream in after the cut turns on
+			await process_frame
+	if cut_at >= 0:  # cave waterfall: cut just under the roof and let the water run
+		game.world.set_cut(cut_at)
+		for i in 240:
 			await process_frame
 	root.get_viewport().get_texture().get_image().save_png(out)
 	quit()

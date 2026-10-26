@@ -310,7 +310,8 @@ func _flush_water(budget_ms: float) -> void:
 		if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
 			return
 		_water_dirty.erase(key)
-		_rebuild_water(Vector2i(key.x, key.z), key.y)
+		if key.y not in _pending_deep.get(Vector2i(key.x, key.z), []):  # not built yet: it'll have the water
+			_rebuild_water(Vector2i(key.x, key.z), key.y)
 
 
 func _opaque(t: int) -> bool:
@@ -351,6 +352,8 @@ func _generate(c: Vector2i) -> void:
 		saved_columns.erase(c)
 		dirty[c] = true
 	columns[c] = blocks
+	for p: Vector3i in g.get("springs", []):  # cave waterfalls run once, then sit still
+		fluids.wake(p)
 	var counts := PackedInt32Array()
 	counts.resize(SECTIONS)
 	var waters := PackedInt32Array()

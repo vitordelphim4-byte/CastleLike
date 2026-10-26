@@ -288,6 +288,20 @@ Regras (Minecraft, menos a fonte infinita):
   correnteza, água fora do leito < 20% da superfície — são os degraus —, nada na área inicial).
 - Custo: geração 8,5 ms e explorar 95 ms por coluna, como antes.
 
+#### 10e4b — Cachoeiras ✅ (feito 2026-10-26)
+- Decidido: quedas nos rios e cachoeiras em cavernas (nascentes em paredões ficaram de fora).
+- Rios: acima do mar, o nível da água anda em patamares de 7 blocos (`RIVER_TERRACE`). São trechos
+  planos separados por quedas de ~6 blocos. Na beira de cada patamar, o gerador já põe a coluna
+  caindo (corrente 7 no topo e "caindo" embaixo), como o Minecraft deixaria. Entre as quedas o rio
+  corre num cânion raso.
+- Cavernas: em 12% das colunas, uma fonte no teto de um salão com 6+ blocos de altura. O mundo acorda
+  essa água ao gerar a coluna, ela cai e se espalha no chão, depois fica parada. Aparece com o corte.
+  Seções profundas ainda não montadas não são montadas por causa da água (`_flush_water`).
+- `river()` ganhou cache (é função pura, e os vizinhos perguntam de novo). Geração em 8,9 ms por
+  coluna.
+- Testes: `test_rivers.gd` (queda de rio de 4+ blocos perto do início, cachoeira de caverna caindo
+  6+ blocos e se espalhando no chão).
+
 #### 10e5 — Lagos subterrâneos (aquíferos)
 - Bolsões de água parada em cavernas e salões, com nível próprio por região, como os aquíferos do
   Minecraft.

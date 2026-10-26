@@ -48,6 +48,9 @@ const RIVER_DEPTH_HIGH := 1.0  # ...and up high
 const RIVER_SMOOTH := 16  # blocks the land is blurred over for the water surface
 const RIVER_BELOW := 2  # water surface this far under the blurred land
 const RIVER_WET := 0.35  # bed cut deep enough here to hold river water
+const RIVER_TERRACE := 7.0  # river surface steps above the sea: a waterfall at each step
+const CAVE_FALL_CHANCE := 0.12  # per column: a spring in the roof of a tall hall
+const CAVE_FALL_MIN := 6  # air under the roof for a cave waterfall
 const VEINS := {
 	World.COAL_ORE: {"count": 7, "size": [5, 12], "depth": [3, 40]},
 	World.IRON_ORE: {"count": 4, "size": [3, 7], "depth": [6, 999]},
@@ -73,6 +76,7 @@ var temperature := FastNoiseLite.new()
 var moisture := FastNoiseLite.new()
 var iron := FastNoiseLite.new()
 var _flow_cache := {}  # Vector2i -> Vector2 (river_flow)
+var _river_cache := {}  # Vector2i -> Vector4 (river): asked for again and again by neighbors
 var cave_a := FastNoiseLite.new()  # spaghetti tunnels: where both are near zero
 var cave_b := FastNoiseLite.new()
 var cave_hall := FastNoiseLite.new()  # cheese halls: where it's high
@@ -143,23 +147,40 @@ func _land(x: int, z: int) -> float:
 # follows the land around them (a blurred height, a little under it, never under the sea), so they
 # go downhill to the sea in 1-block steps. High up they're narrow, shallow streams; near the sea,
 # wide and deep rivers. Returns (how much the bed is cut here 0..1, water surface y, depth), or
-# ZERO away from rivers. `land` = _land(x, z) when the caller has it.
-func river(x: int, z: int, land := NAN) -> Vector3:
+# ZERO away from rivers; w = the surface before the terrace steps. `land` = _land(x, z) when the
+# caller has it.
+func river(x: int, z: int, land := NAN) -> Vector4:
+	var key := Vector2i(x, z)
+	if _river_cache.has(key):
+		return _river_cache[key]
+	if _river_cache.size() > 200000:
+		_river_cache.clear()
+	var r := _river(x, z, land)
+	_river_cache[key] = r
+	return r
+
+
+func _river(x: int, z: int, land: float) -> Vector4:
 	var wx := x + warp.get_noise_2d(x, z) * WARP
 	var wz := z + warp.get_noise_2d(z + 7919, x - 3571) * WARP
 	var n := absf(rivers.get_noise_2d(wx, wz))
 	if n >= RIVER_BAND_WIDE:
-		return Vector3.ZERO
+		return Vector4.ZERO
 	var m := _mountains(wx, wz, continent.get_noise_2d(wx, wz))
 	if m >= 1.0:
-		return Vector3.ZERO
+		return Vector4.ZERO
 	if is_nan(land):
 		land = _land(x, z)
-	var s := maxf(WATER_LEVEL, minf(floorf(_river_level(x, z)) - RIVER_BELOW, floorf(land) - 1.0))
+	# Above the sea the surface goes in RIVER_TERRACE steps: flat stretches and waterfalls between.
+	var raw := floorf(_river_level(x, z)) - RIVER_BELOW
+	var level := raw
+	if level > WATER_LEVEL + RIVER_TERRACE:
+		level = WATER_LEVEL + floorf((level - WATER_LEVEL) / RIVER_TERRACE) * RIVER_TERRACE
+	var s := maxf(WATER_LEVEL, minf(level, floorf(land) - 1.0))
 	var high := clampf((s - WATER_LEVEL) / RIVER_HIGH, 0.0, 1.0)  # 0 at sea level .. 1 up high
 	var band := lerpf(RIVER_BAND_WIDE, RIVER_BAND_NARROW, high)
 	var carve := (1.0 - smoothstep(band * 0.4, band, n)) * (1.0 - m)
-	return Vector3(carve, s, lerpf(RIVER_DEPTH_SEA, RIVER_DEPTH_HIGH, high)) if carve > 0.0 else Vector3.ZERO
+	return Vector4(carve, s, lerpf(RIVER_DEPTH_SEA, RIVER_DEPTH_HIGH, high), raw) if carve > 0.0 else Vector4.ZERO
 
 
 # The land blurred over RIVER_SMOOTH blocks: what a river's surface follows.
@@ -274,7 +295,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 			var top := clampi(int(hs[k]), 1, sy - 3)
 			tops[lx + size * lz] = top
 			# River water over this spot (its surface y), away from the start area; -1 = none.
-			var r := river(wx, wz) if not flat else Vector3.ZERO
+			var r := river(wx, wz) if not flat else Vector4.ZERO
 			var river_top := int(r.y) if r.x > RIVER_WET and top < r.y and Vector2(wx - spawn.x, wz - spawn.y).length() > START_RADIUS else -1
 			var steep := maxf(maxf(absf(hs[k] - hs[k - 1]), absf(hs[k] - hs[k + 1])),
 				maxf(absf(hs[k] - hs[k - size - 2]), absf(hs[k] - hs[k + size + 2]))) > 2.5
@@ -312,6 +333,8 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 			if not flat:  # the debug plain sits below water level and must stay dry
 				for y in range(top + 1, maxi(WATER_LEVEL, river_top) + 1):
 					blocks[lx + size * (lz + size * y)] = World.WATER
+				if river_top >= 0:
+					_river_fall(blocks, wx, wz, lx + size * lz, size * size, river_top, r.w)
 	# How deep under the ground this column is open to the sky (cave mouth / ravine; 0 = closed):
 	# the game shows the caves down to there.
 	var open_depth := 0
@@ -320,8 +343,52 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 		open_depth = _ravines(cx, cz, size, tops, blocks)
 		if _tunnels(cx, cz, size, tops, blocks):
 			open_depth = maxi(open_depth, MOUTH_DEPTH)
+	var springs: Array[Vector3i] = []
+	if not flat:
+		_cave_fall(cx, cz, size, tops, blocks, springs)
 	_plant(cx, cz, size, tops, blocks, trees)  # skips spots carved open (no soil left on top)
-	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth}
+	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth, "springs": springs}
+
+
+# River waterfall: a river spot right below a higher stretch of the same river gets the falling
+# water, from its own surface up to the stretch above (flowing 7 on top, as Minecraft would leave it).
+func _river_fall(blocks: PackedByteArray, wx: int, wz: int, i: int, area: int, surface: int, raw: float) -> void:
+	# A neighbor can only be a terrace higher if this spot is near the top of its terrace.
+	if raw <= WATER_LEVEL + RIVER_TERRACE or fposmod(raw - WATER_LEVEL, RIVER_TERRACE) < RIVER_TERRACE - 2.0:
+		return
+	var up := surface
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var r := river(wx + d.x, wz + d.y)
+		if r.x > RIVER_WET and r.y > up:
+			up = int(r.y)
+	if up <= surface + 1:
+		return
+	for y in range(surface + 1, up + 1):
+		if blocks[i + area * y] == World.AIR:
+			blocks[i + area * y] = World.FLOW_7 if y == up else World.FALLING
+
+
+# Cave waterfall: sometimes, a spring in the roof of a tall hall (CAVE_FALL_MIN+ of air under it).
+# Only the source goes in; the game wakes it (`springs`) and the water falls and pools on its own.
+func _cave_fall(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray, springs: Array[Vector3i]) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector3i(cx, cz, world_seed + 991))
+	if rng.randf() >= CAVE_FALL_CHANCE:
+		return
+	var area := size * size
+	for attempt in 6:
+		var i := rng.randi() % area
+		var air := 0
+		for y in range(tops[i] - HALL_ROOF, BEDROCK_MAX, -1):
+			if blocks[i + area * y] == World.AIR:
+				air += 1
+				continue
+			if air >= CAVE_FALL_MIN and blocks[i + area * (y + air + 1)] in [World.STONE, World.DEEPSLATE]:
+				var roof := y + air + 1
+				blocks[i + area * roof] = World.WATER
+				springs.append(Vector3i(cx * size + i % size, roof, cz * size + i / size))
+				return
+			air = 0
 
 
 # Entrances and ravines stay off water, beaches and the colony's start area.
