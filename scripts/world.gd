@@ -50,6 +50,7 @@ const NAV_ID_OFFSET := 1 << 20
 # in direction k (side, other side, diagonal), for blocks away from the column's edges.
 static var AO_OFF: Array[PackedInt32Array] = []
 const XRAY_MAX := 9  # matches view_clip.gdshaderinc
+const INSIDE_LIGHT := 0.4  # least light underground while cutting / x-raying (shader min_light)
 const WADE_COST := 3.0  # A* weight of a shallow-water cell: paths go around when it's cheap to
 # Lake / sea surface shortcut (_still_surface): the 8 cells around (and the cell itself), and the
 # corners every such cell gets.
@@ -96,12 +97,20 @@ var xray_cursor := false:  # V: see through the ground around the mouse
 	set(v):
 		xray_cursor = v
 		_show_sections()
+		_set_min_light()
 # Deep sections (wholly under the column's natural ground, caves only) are hidden unless something
 # can show them: a layer cut, the cursor x-ray, or digging in that column (opened).
 var _deep_below := {}  # Vector2i -> sections whose top is at or under this y are deep
 var fluids := Fluids.new()
 var _water_dirty := {}  # Vector3i(cx, section, cz) -> true: water mesh to rebuild
 var _full_dirty := {}  # same, whole section (water came over / left tall grass)
+# Sky light (Phase 10f), Minecraft style 0..15: cells over a column's highest opaque block (heights)
+# get 15; light reaches under overhangs, down shafts and into cave mouths losing 1 per block.
+# Stored sparse per column (sky): only lit cells under the top; anything else down there is dark.
+var heights := {}  # Vector2i -> PackedInt32Array(256): highest opaque y per spot, -1 none
+var hollows := {}  # Vector2i -> PackedInt32Array(256): highest open cell under that top, -1 none
+var sky := {}  # Vector2i -> Dictionary Vector3i -> light (cells under the top that some light reaches)
+var _sky_src := {}  # Vector2i -> the light entering through that column's openings (_sky_from)
 var wet := {}  # Vector2i -> PackedInt32Array: water blocks per section (dry ones skip the water mesh)
 var _opened := {}  # Vector2i -> deep sections reaching above this y show (0 = all: dug into)
 var _cut_tick := 0.0
@@ -125,6 +134,7 @@ func _ready() -> void:
 	_add_void_floor()
 	fluids.world = self
 	add_child(fluids)
+	_set_min_light()
 	sway.set_shader_parameter("tex", _tuft_atlas())
 	for k in TUFT_TILES.size():
 		tuft_meshes.append(_tuft_mesh(k))
@@ -250,6 +260,12 @@ func set_blocks(cells: Dictionary) -> void:
 		columns[c][i] = cells[p]
 		dirty[c] = true
 		opaque[c][p.y / SECTION] += int(_opaque(cells[p])) - int(_opaque(old))
+		_update_height(p)
+		for dx in range(-2, 3):  # the sky light around may change: computed again when asked
+			for dz in range(-2, 3):
+				sky.erase(c + Vector2i(dx, dz))
+				if absi(dx) < 2 and absi(dz) < 2:
+					_sky_src.erase(c + Vector2i(dx, dz))
 		wet[c][p.y / SECTION] += int(is_water(cells[p])) - int(is_water(old))
 		# Sections around too: face culling and AO read across section borders.
 		for dx in [-1, 0, 1]:
@@ -358,16 +374,31 @@ func _generate(c: Vector2i) -> void:
 	counts.resize(SECTIONS)
 	var waters := PackedInt32Array()
 	waters.resize(SECTIONS)
+	var top := PackedInt32Array()  # highest opaque block per (lx + 16 * lz), -1 = none
+	top.resize(CHUNK * CHUNK)
+	top.fill(-1)
+	var open_y := PackedInt32Array()  # last open (non-opaque) y seen per spot while going up
+	open_y.resize(CHUNK * CHUNK)
+	open_y.fill(-1)
+	var under := PackedInt32Array()  # highest open cell under the top per spot (-1: none)
+	under.resize(CHUNK * CHUNK)
+	under.fill(-1)
 	for i in blocks.size():
 		var t := blocks[i]
+		if t == AIR or t == WATER or (t >= FLOW_1 and t <= FALLING):
+			open_y[i % (CHUNK * CHUNK)] = i / (CHUNK * CHUNK)
 		if t == AIR:
 			continue
 		if is_water(t):
 			waters[i / SECTION_VOL] += 1
 		else:
 			counts[i / SECTION_VOL] += 1
+			top[i % (CHUNK * CHUNK)] = i / (CHUNK * CHUNK)  # i grows with y: the last one is the top
+			under[i % (CHUNK * CHUNK)] = open_y[i % (CHUNK * CHUNK)]
 	opaque[c] = counts
 	wet[c] = waters
+	heights[c] = top
+	hollows[c] = under
 	var cells := []
 	for t: Dictionary in g.trees:
 		t.amount = tree_left.get(t.cell, ResourceNode.amount_for(t))
@@ -500,6 +531,10 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var faces := 0
 	var grass_tops: Array[Vector3i] = []
+	var tops: PackedInt32Array = heights[c]  # sky light, inner faces: read here (no call per face)
+	if not sky.has(c):
+		_compute_sky(c)
+	var col_sky: Dictionary = sky[c]
 	var col_props := false  # solid pieces shade too: then AO goes the slow way (is_solid)
 	for q: Vector3i in props:
 		if q.x >> 4 == c.x and q.z >> 4 == c.y:
@@ -518,7 +553,9 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 					var nb: int = data[i + N_OFF[k]] if inner else get_block(p + VoxelMesh.DIRS[k])
 					if nb == AIR or nb == WATER or (nb >= FLOW_1 and nb <= FALLING):
 						if inner and not col_props:
-							_add_inner_face(st, p, k, t, data, i)
+							var f := p + VoxelMesh.DIRS[k]
+							var dk: float = 0.0 if f.y > tops[(f.x & 15) + CHUNK * (f.z & 15)] else 1.0 - col_sky.get(f, 0) / 15.0
+							_add_inner_face(st, p, k, t, data, i, dk)
 						else:
 							_add_block_face(st, p, VoxelMesh.DIRS[k], t)
 						faces += 1
@@ -693,6 +730,106 @@ func _add_void_floor() -> void:
 	add_child(floor_mi)
 
 
+# --- Sky light (Phase 10f) ---
+
+# Sky light at p, 0..15 (for later: monsters spawn in the dark). Unknown columns count as lit.
+func light_at(p: Vector3i) -> int:
+	var c := Vector2i(p.x >> 4, p.z >> 4)
+	if not heights.has(c):
+		return 15
+	if p.y > heights[c][(p.x & 15) + CHUNK * (p.z & 15)]:
+		return 15
+	if not sky.has(c):
+		_compute_sky(c)
+	return sky[c].get(p, 0)
+
+
+
+
+# For the mesh: darkness of the cell a face looks into (UV2.x = 1 - light / 15).
+func _dark(front: Vector3i) -> Vector2:
+	return Vector2(1.0 - light_at(front) / 15.0, 0)
+
+
+# Keeps a spot's highest opaque block right after p changed.
+func _update_height(p: Vector3i) -> void:
+	var c := Vector2i(p.x >> 4, p.z >> 4)
+	if not heights.has(c):
+		return
+	var k := (p.x & 15) + CHUNK * (p.z & 15)
+	if _opaque(get_block(p)):
+		heights[c][k] = maxi(heights[c][k], p.y)
+	elif p.y == heights[c][k]:
+		var y := p.y - 1
+		while y >= 0 and not _opaque(get_block(Vector3i(p.x, y, p.z))):
+			y -= 1
+		heights[c][k] = y
+	# Highest open cell under the (new) top: scan down from it.
+	var u: int = heights[c][k] - 1
+	while u >= 0 and _opaque(get_block(Vector3i(p.x, u, p.z))):
+		u -= 1
+	hollows[c][k] = u
+
+
+# Sky light under the tops of column c: the light of every column within reach (3x3 around, each
+# flood done once: _sky_from) merged, brightest wins.
+func _compute_sky(c: Vector2i) -> void:
+	var out := {}
+	for dx in [-1, 0, 1]:
+		for dz in [-1, 0, 1]:
+			var n := c + Vector2i(dx, dz)
+			if not heights.has(n):
+				continue  # not generated yet (the light never makes columns generate)
+			if not _sky_src.has(n):
+				_sky_src[n] = _sky_from(n)
+			for p: Vector3i in _sky_src[n]:
+				if p.x >> 4 == c.x and p.z >> 4 == c.y and out.get(p, 0) < _sky_src[n][p]:
+					out[p] = _sky_src[n][p]
+	sky[c] = out
+
+
+# The light coming in through column n's openings: from each open-sky cell of n that touches a
+# non-opaque cell under a neighbor's top (cave mouth, overhang, shaft side), losing 1 per block.
+# Returns every lit cell under the tops (any column) -> light.
+func _sky_from(n: Vector2i) -> Dictionary:
+	var lit := {}
+	var queue: Array[Vector3i] = []
+	for x in range(n.x * CHUNK, n.x * CHUNK + CHUNK):
+		for z in range(n.y * CHUNK, n.y * CHUNK + CHUNK):
+			var top := _top_at(x, z)
+			for d in H_DIRS:
+				var nc := Vector2i((x + d.x) >> 4, (z + d.z) >> 4)
+				if not heights.has(nc):
+					continue  # not generated: light from there comes in when it is (ponytail)
+				var nk := ((x + d.x) & 15) + CHUNK * ((z + d.z) & 15)
+				var nt: int = mini(heights[nc][nk], hollows[nc][nk])  # nothing open over its hollow
+				for y in range(top + 1, nt + 1):  # open sky here, under the neighbor's top there
+					var q := Vector3i(x + d.x, y, z + d.z)
+					if lit.get(q, 0) < 14 and not _opaque(get_block(q)):
+						lit[q] = 14
+						queue.append(q)
+	while not queue.is_empty():
+		var p: Vector3i = queue.pop_back()
+		var l: int = lit[p]
+		if l <= 1:
+			continue
+		for d in VoxelMesh.DIRS:
+			var q := p + d
+			var known := heights.has(Vector2i(q.x >> 4, q.z >> 4))
+			if q.y < 0 or q.y >= SY or lit.get(q, 0) >= l - 1 or not known or q.y > _top_at(q.x, q.z) or _opaque(get_block(q)):
+				continue
+			lit[q] = l - 1
+			queue.append(q)
+	return lit
+
+
+func _top_at(x: int, z: int) -> int:
+	var c := Vector2i(x >> 4, z >> 4)
+	if not heights.has(c):
+		_data(c)
+	return heights[c][(x & 15) + CHUNK * (z & 15)]
+
+
 # --- Seeing inside (layer cut, x-ray) ---
 
 # Hide every layer from y up (SY = show all). Caps on the cut plane stream in nearest first.
@@ -700,6 +837,7 @@ func set_cut(y: int) -> void:
 	cut_y = clampi(y, 1, SY)
 	for m: ShaderMaterial in [material, water_material, sway]:
 		m.set_shader_parameter("cut_y", float(cut_y))
+	_set_min_light()
 	for c: Vector2i in caps.keys():
 		_free_cap(c)
 	_show_sections()
@@ -719,6 +857,13 @@ func cut_to(feet: Vector3) -> void:
 	if cut_y >= SY and top_at(floori(feet.x), floori(feet.z)) <= y:
 		return
 	set_cut(y + 2)
+
+
+# Caves are dark, but not while the player is looking inside them (cut / x-ray): see min_light.
+func _set_min_light() -> void:
+	var v := INSIDE_LIGHT if cut_y < SY or xray_cursor else 0.0
+	for m: ShaderMaterial in [material, water_material]:
+		m.set_shader_parameter("min_light", v)
 
 
 func _show_sections() -> void:
@@ -777,7 +922,8 @@ func _build_cap(c: Vector2i) -> void:
 			elif t == AIR and unbuilt:
 				col = Color(0.03, 0.03, 0.03, 1.0)  # cave not meshed yet: dark, not sky
 			if col.a > 0:
-				VoxelMesh.add_face(st, Vector3(c.x * CHUNK + lx, y, c.y * CHUNK + lz), Vector3.UP, [col, col, col, col], 1.0, Vector2(0 if t == AIR else t, 1))
+				VoxelMesh.add_face(st, Vector3(c.x * CHUNK + lx, y, c.y * CHUNK + lz), Vector3.UP, [col, col, col, col], 1.0,
+					Vector2(0 if t == AIR else t, 1), Vector2(1, 0))  # under the cut: dark (min_light shows it)
 				faces += 1
 	if faces == 0:
 		return
@@ -808,12 +954,12 @@ func _add_block_face(st: SurfaceTool, p: Vector3i, n: Vector3i, t: int) -> void:
 		var corner := is_solid(front + up * k.x + right * k.y)
 		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(corner)
 		cols.append(Color(COLORS[t], AO_LIGHT[open]))
-	VoxelMesh.add_face(st, Vector3(p), Vector3(n), cols, 1.0, Vector2(t, 0))
+	VoxelMesh.add_face(st, Vector3(p), Vector3(n), cols, 1.0, Vector2(t, 0), _dark(front))
 
 
 # Same as _add_block_face for a block away from the column's edges: AO read straight from the
 # column array (the hot path when meshing caves: 12 lookups per face).
-func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedByteArray, i: int) -> void:
+func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedByteArray, i: int, dark: float) -> void:
 	var o: PackedInt32Array = AO_OFF[k]
 	var cols: Array[Color] = []
 	for j in 4:
@@ -826,7 +972,7 @@ func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedB
 		var s3 := d != AIR and d != WATER and (d < FLOW_1 or d > FALLING)
 		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(s3)
 		cols.append(Color(COLORS[t], AO_LIGHT[open]))
-	VoxelMesh.add_face(st, Vector3(p), Vector3(VoxelMesh.DIRS[k]), cols, 1.0, Vector2(t, 0))
+	VoxelMesh.add_face(st, Vector3(p), Vector3(VoxelMesh.DIRS[k]), cols, 1.0, Vector2(t, 0), Vector2(dark, 0))
 
 
 # Water face of cell p toward air: the top edge follows the surface's corner heights
@@ -847,6 +993,7 @@ func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i, corners: Diction
 			normal = -normal
 	st.set_normal(normal)
 	st.set_color(flow)
+	st.set_uv2(_dark(p))
 	for i in [0, 1, 2, 0, 2, 3]:
 		st.add_vertex(q[i])
 

@@ -9,9 +9,11 @@ uniform float daylight = 1.0;  // set by day_night.gd: dims the water at night
 
 varying vec3 wpos;
 varying vec3 flow;  // x, z = direction, y = falling
+varying float dark;  // UV2.x, sky light darkness (see terrain)
 
 void vertex() {
 	wpos = VERTEX;
+	dark = UV2.x;
 	flow = vec3(COLOR.r * 2.0 - 1.0, COLOR.b, COLOR.g * 2.0 - 1.0);
 	if (NORMAL.y > 0.5) {
 		VERTEX.y += sin(TIME * 1.4 + VERTEX.x * 0.7 + VERTEX.z * 0.5) * 0.035;
@@ -35,6 +37,7 @@ void fragment() {
 	vec3 base = vec3(0.07, 0.2, 0.7);  // Minecraft-like blue, strong even when shallow
 	ALBEDO = mix(base, vec3(0.45, 0.6, 0.95), streak) * mix(0.3, 1.0, daylight);
 	ALPHA = 0.86 + streak * 0.1;
+	AO = sky_ao(dark);
 	ROUGHNESS = 0.18;
 	SPECULAR = 0.4;
 }

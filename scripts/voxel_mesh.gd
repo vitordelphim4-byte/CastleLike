@@ -8,6 +8,7 @@ const DIRS: Array[Vector3i] = [
 const CORNERS: Array[Vector2i] = [Vector2i(1, -1), Vector2i(1, 1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
 static var material: StandardMaterial3D
+const NO_UV2 := Vector2(-1, -1)
 
 
 # Tangent axes of face n: (up, right). right = up x n.
@@ -18,7 +19,8 @@ static func axes(n: Vector3) -> Array[Vector3]:
 
 # Quad on face n of the unit cube at p, clockwise (Godot front face), scaled by s.
 # cols: one color per corner (see CORNERS).
-static func add_face(st: SurfaceTool, p: Vector3, n: Vector3, cols: Array[Color], s := 1.0, uv := Vector2.ZERO) -> void:
+# uv2: optional second UV (terrain: darkness from the sky light, World.light_at); NO_UV2 = none.
+static func add_face(st: SurfaceTool, p: Vector3, n: Vector3, cols: Array[Color], s := 1.0, uv := Vector2.ZERO, uv2 := NO_UV2) -> void:
 	var ax := axes(n)
 	var c := p + Vector3.ONE * 0.5 + n * 0.5
 	var q: Array[Vector3] = []
@@ -26,6 +28,8 @@ static func add_face(st: SurfaceTool, p: Vector3, n: Vector3, cols: Array[Color]
 		q.append(c + (ax[0] * k.x + ax[1] * k.y) * 0.5)
 	st.set_normal(n)
 	st.set_uv(uv)
+	if uv2 != NO_UV2:
+		st.set_uv2(uv2)
 	for i in [0, 1, 2, 0, 2, 3]:
 		st.set_color(cols[i])
 		st.add_vertex(q[i] * s)

@@ -178,6 +178,7 @@ func _build_mine_area() -> void:
 					t = World.IRON_ORE  # ore shell around the sealed cave
 				cells[p] = t
 	world.set_blocks(cells)
+	world.add_prop(Vector3i(chamber.position.x + 1, y, chamber.position.y + 1), "torch", Vector3i.FORWARD)  # lights the dark chamber
 	mine = {"rect": r, "y": y, "chamber": Vector3(chamber.get_center().x + 0.5, y, chamber.get_center().y + 0.5),
 		"cave_y": y + 4}
 

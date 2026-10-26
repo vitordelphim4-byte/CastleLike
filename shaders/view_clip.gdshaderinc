@@ -4,6 +4,15 @@
 uniform float cut_y = 10000.0;
 uniform vec4 xray[9];
 uniform float xray_radius = 2.2;  // hole radius, in blocks, at the target's distance
+// Phase 10f: caves are dark (sky light baked in UV2.x as darkness). While the player looks inside
+// (layer cut, x-ray) they get at least this much light, so the view stays useful.
+uniform float min_light = 0.0;
+
+// Ambient occlusion from the baked sky light: only ambient light is cut, torches still light it.
+float sky_ao(float darkness) {
+	float sky = 1.0 - darkness;
+	return max(min_light, sky * sky);
+}
 
 // 0 = keep, 1 = on the hole's rim (darken), 2 = inside the hole (discard).
 float xray_hit(vec3 p, vec3 cam) {

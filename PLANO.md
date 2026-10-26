@@ -331,12 +331,23 @@ Regras (Minecraft, menos a fonte infinita):
 (escada do prédio), `test_pieces`, `test_farm`. Suspeita: algo depende do tempo real (Game.real_dt)
 ou de animais andando aleatoriamente.
 
-### 10f — Escuridão e tochas
-- Luz do céu propagada por blocos, como no Minecraft: cavernas escuras, entrada clareando.
-  Ela fica gravada na malha junto com a oclusão de ambiente, sem luz em tempo real (barato).
-- Tocha (peça nova de construção, custa madeira + carvão): ilumina um raio de blocos.
-- Base para monstros nascerem no escuro (fase de monstros).
-- Teste: um bloco de caverna fechada fica escuro, e um bloco ao lado de uma tocha fica claro.
+### 10f — Escuridão e tochas ✅ (feito 2026-10-26)
+- Luz do céu estilo Minecraft (0–15): 15 acima do bloco opaco mais alto de cada ponto (`heights`).
+  Abaixo dele, a luz entra por bocas, ravinas, poços e beiradas, e cai 1 por bloco. Calculada só onde
+  ela realmente entra (esparsa por coluna, `sky`), juntando a luz que entra por cada coluna vizinha
+  (`_sky_from`, uma vez por coluna). Recalculada em volta de quem cava ou constrói.
+  `World.light_at(p)` (para os monstros nascerem no escuro, depois).
+- A luz vai gravada no vértice (UV2) e entra como oclusão de ambiente (AO) no shader do terreno e da
+  água: cavernas fechadas ficam escuras, e entradas e poços clareiam aos poucos. Luzes reais (tochas,
+  sol) continuam iluminando.
+- Com o corte ou o raio-X ligado, o subsolo recebe uma luz mínima (`INSIDE_LIGHT`), senão a visão de
+  corte ficaria preta.
+- Tocha: já existia no menu (Iluminação, com luz em tempo real). Agora há uma na câmara do morro de
+  testes. **Pendente:** custar carvão (hoje 1 madeira; o custo das peças só aceita um material e as
+  cores do modelo dependem dele).
+- Custo: malhas 87 ms por coluna (era 76), explorar ~113 ms. FPS igual (~52).
+- Teste: `test_light.gd` (chão aberto 15, sala fechada 0, poço cavado: 15 → 14 … → 9 pela sala,
+  luz mínima só com o corte).
 
 ### 10g — Desempenho
 - Ruído 3D em lote (`Noise.get_image_3d` em C++) em vez de bloco a bloco no GDScript.

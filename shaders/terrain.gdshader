@@ -9,6 +9,7 @@ render_mode cull_disabled;
 
 varying vec3 wpos;
 varying vec3 wnorm;
+varying float dark;  // UV2.x: 0 = open sky .. 1 = no sky light (World.light_at)
 
 float hash(vec3 p) {
 	p = fract(p * 0.3183099 + 0.1);
@@ -19,6 +20,7 @@ float hash(vec3 p) {
 void vertex() {
 	wpos = VERTEX; // world mesh sits at the origin
 	wnorm = NORMAL;
+	dark = UV2.x;
 }
 
 void fragment() {
@@ -70,6 +72,7 @@ void fragment() {
 	if (UV.y > 0.5) col *= 0.62;  // cut cap: you're looking at a slice, not the surface
 	if (xr > 0.5) col *= 0.35;
 	ALBEDO = pow(col, vec3(2.2)) * COLOR.a; // colors are authored in sRGB
+	AO = sky_ao(dark);
 	if (!FRONT_FACING) {
 		ALBEDO = vec3(0.025, 0.022, 0.02);
 	}
