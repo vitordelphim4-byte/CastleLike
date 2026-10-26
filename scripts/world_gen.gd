@@ -5,6 +5,8 @@ class_name WorldGen
 ## mountains (more of them in highlands) + rivers along the "zero line" of a noise + lakes
 ## (everything below WATER_LEVEL fills with water). Temperature x moisture pick the biome.
 ## Shapes are domain-warped so coasts and ranges aren't noise-blob round.
+## Underground (Phase 10): bedrock, deepslate, ore veins and "spaghetti" tunnels (air where two 3D
+## noises are both near zero, as in Minecraft 1.18+).
 ## The spawn is searched per seed (dry, gentle land near wood), so every world starts somewhere new.
 
 const DEPTH := 64  # Phase 10a: underground added under the old world, which sits this much higher
@@ -23,6 +25,9 @@ const DEEP_TOP := 32  # deepslate below about this (the boundary waves a few blo
 const BEDROCK_MAX := 3  # bedrock: layer 0 everywhere, ragged up to this
 # Ore veins (Minecraft style): per column, `count` random walks of `size` blocks through stone, from
 # `depth` blocks under the surface down. Iron: everywhere, bigger veins in deepslate. Coal: shallow.
+const CAVE_FREQ := 0.022
+const CAVE_WIDTH := 0.11  # each tunnel noise must be within this of zero (bigger = fatter tunnels)
+const CAVE_ROOF := 4  # tunnels stay this many blocks under the surface (10d opens some)
 const VEINS := {
 	World.COAL_ORE: {"count": 7, "size": [5, 12], "depth": [3, 40]},
 	World.IRON_ORE: {"count": 4, "size": [3, 7], "depth": [6, 999]},
@@ -47,6 +52,8 @@ var rivers := FastNoiseLite.new()
 var temperature := FastNoiseLite.new()
 var moisture := FastNoiseLite.new()
 var iron := FastNoiseLite.new()
+var cave_a := FastNoiseLite.new()  # spaghetti tunnels: where both are near zero
+var cave_b := FastNoiseLite.new()
 
 
 func _init(seed_value: int, is_flat := false) -> void:
@@ -62,6 +69,8 @@ func _init(seed_value: int, is_flat := false) -> void:
 	_setup(roughness, 8, 0.004, 2, FastNoiseLite.FRACTAL_FBM)
 	_setup(temperature, 9, 0.0016, 2, FastNoiseLite.FRACTAL_FBM)
 	_setup(warp, 10, 0.006, 2, FastNoiseLite.FRACTAL_FBM)
+	_setup(cave_a, 11, CAVE_FREQ, 1, FastNoiseLite.FRACTAL_NONE)
+	_setup(cave_b, 12, CAVE_FREQ, 1, FastNoiseLite.FRACTAL_NONE)
 	if not flat:
 		_find_spawn()
 
@@ -220,6 +229,7 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 					blocks[lx + size * (lz + size * y)] = World.WATER
 	if not flat:
 		_veins(cx, cz, size, tops, blocks)
+		_tunnels(cx, cz, size, tops, blocks)
 	_plant(cx, cz, size, tops, blocks, trees)
 	return {"blocks": blocks, "trees": trees}
 
@@ -239,6 +249,40 @@ func _fill(blocks: PackedByteArray, i: int, y: int, top: int, surf: int, sub: in
 	elif y < deep:
 		t = World.DEEPSLATE
 	blocks[i] = t
+
+
+# Spaghetti tunnels. The noise comes in whole 16x16 slices per layer from get_image_3d (C++), not
+# a call per block: noise (x, z, y) with the column's offset, 0..255 for -1..1. Ore walls stay (the
+# veins went in first), bedrock and water are never carved.
+func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> void:
+	var y0 := BEDROCK_MAX + 1
+	var high := 0
+	for t in tops:
+		high = maxi(high, t)
+	var h := high - CAVE_ROOF - y0 + 1
+	if h <= 0:
+		return
+	var a := _slices(cave_a, cx, cz, size, y0, h)
+	var b := _slices(cave_b, cx, cz, size, y0, h)
+	var lim := CAVE_WIDTH * 127.5
+	var area := size * size
+	for k in h:
+		var y := y0 + k
+		var da: PackedByteArray = a[k]
+		var db: PackedByteArray = b[k]
+		for i in area:
+			if absf(da[i] - 127.5) < lim and absf(db[i] - 127.5) < lim and y <= tops[i] - CAVE_ROOF 					and blocks[i + area * y] != World.WATER:
+				blocks[i + area * y] = World.AIR
+
+
+# Noise n over the column (cx, cz), layers y0..y0+h-1: one byte array per layer, index lx + size * lz.
+# ponytail: moves the shared noise's offset, so generation must stay on one thread (10g changes it).
+func _slices(n: FastNoiseLite, cx: int, cz: int, size: int, y0: int, h: int) -> Array:
+	n.offset = Vector3(cx * size, cz * size, y0)
+	var out := []
+	for img: Image in n.get_image_3d(size, size, h, false, false):
+		out.append(img.get_data())
+	return out
 
 
 func _veins(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> void:

@@ -1,17 +1,18 @@
 extends Control
 ## World generation debugger: top-down map of any seed, layer by layer.
 ## Run: run_worldgen_debug.bat [seed]  (or godot --path . res://worldgen_debug.tscn -- [seed])
-## Keys: 1-7 layer, WASD / arrows pan, +/- zoom, N new seed, R back to spawn, Enter play this seed.
+## Keys: 1-8 layer (8 = vertical slice: blocks seen from the side along x, at the map's center z), WASD / arrows pan, +/- zoom, N new seed, R back to spawn, Enter play this seed.
 ## Mouse: hover shows every value WorldGen computes at that column.
 
 const SIZE := 320  # map pixels per side (drawn 2x)
-const LAYERS := ["Bioma", "Altura", "Temperatura", "Umidade", "Continente", "Montanhas", "Rios"]
+const LAYERS := ["Bioma", "Altura", "Temperatura", "Umidade", "Continente", "Montanhas", "Rios", "Corte vertical"]
 const BIOME_COLORS := {
 	"water": Color(0.2, 0.4, 0.8), "beach": Color(0.9, 0.85, 0.6), "plains": Color(0.55, 0.78, 0.35),
 	"forest": Color(0.15, 0.5, 0.18), "taiga": Color(0.2, 0.4, 0.35), "tundra": Color(0.85, 0.9, 0.95),
 	"desert": Color(0.93, 0.8, 0.45), "mountain": Color(0.5, 0.5, 0.52), "snow": Color(1, 1, 1),
 }
-const HELP := """1-7 camada: Bioma, Altura, Temperatura, Umidade, Continente, Montanhas, Rios
+const HELP := """1-8 camada: Bioma, Altura, Temperatura, Umidade, Continente, Montanhas, Rios, Corte vertical
+(8: blocos vistos de lado ao longo de x, no z do centro; 1 bloco por pixel, y 0 embaixo)
 WASD / setas: mover    + / -: zoom
 N: novo seed    R: voltar ao spawn
 Enter: jogar este seed
@@ -70,12 +71,15 @@ func _new_world(s: int) -> void:
 func _redraw() -> void:
 	var t := Time.get_ticks_usec()
 	var img := Image.create(SIZE, SIZE, false, Image.FORMAT_RGB8)
-	for py in SIZE:
-		for px in SIZE:
-			var w := _to_world(Vector2(px, py))
-			img.set_pixel(px, py, _color(w.x, w.y))
-	# Spawn (red) and origin (yellow) markers.
-	for m: Array in [[Vector2(gen.spawn), Color.RED], [Vector2.ZERO, Color.YELLOW]]:
+	if layer == 7:
+		_slice(img)
+	else:
+		for py in SIZE:
+			for px in SIZE:
+				var w := _to_world(Vector2(px, py))
+				img.set_pixel(px, py, _color(w.x, w.y))
+	# Spawn (red) and origin (yellow) markers (top-down layers only).
+	for m: Array in [[Vector2(gen.spawn), Color.RED], [Vector2.ZERO, Color.YELLOW]] if layer != 7 else []:
 		var p: Vector2 = (m[0] - center) / zoom + Vector2.ONE * SIZE / 2
 		for d in range(-4, 5):
 			for q: Vector2i in [Vector2i(int(p.x) + d, int(p.y)), Vector2i(int(p.x), int(p.y) + d)]:
@@ -87,6 +91,37 @@ func _redraw() -> void:
 		gen.world_seed, LAYERS[layer], zoom, ms, ms * 1000.0 / (SIZE * SIZE)]
 
 
+# Side view: world x across (1 block per pixel, centered), world y up from the bottom, at z = center.
+# Generates the real columns, so caves, ore and layers show as they will in the game.
+func _slice(img: Image) -> void:
+	img.fill(Color(0.55, 0.75, 0.95))
+	var z := int(center.y)
+	var x0 := int(center.x) - SIZE / 2
+	for cx in range(x0 >> 4, ((x0 + SIZE - 1) >> 4) + 1):
+		var blocks: PackedByteArray = gen.generate(cx, z >> 4, World.CHUNK, World.SY).blocks
+		for lx in World.CHUNK:
+			var px := cx * World.CHUNK + lx - x0
+			if px < 0 or px >= SIZE:
+				continue
+			var top := 0
+			for y in mini(World.SY, SIZE):
+				var t := blocks[lx + World.CHUNK * ((z & 15) + World.CHUNK * y)]
+				if t != World.AIR:
+					top = y
+			for y in mini(World.SY, SIZE):
+				var t := blocks[lx + World.CHUNK * ((z & 15) + World.CHUNK * y)]
+				var c: Color = World.COLORS.get(t, Color(0.55, 0.75, 0.95))
+				if t == World.WATER:
+					c = Color(0.15, 0.35, 0.75)
+				elif t == World.AIR and y < top:
+					c = Color(0.06, 0.05, 0.05)  # cave
+				elif t == World.IRON_ORE:
+					c = Color(0.8, 0.45, 0.25)
+				elif t == World.COAL_ORE:
+					c = Color(0.35, 0.28, 0.42)  # purple: tells coal from caves
+				img.set_pixel(px, SIZE - 1 - y, c)
+
+
 func _to_world(px: Vector2) -> Vector2i:
 	return Vector2i(((px - Vector2.ONE * SIZE / 2) * zoom + center).floor())
 
@@ -96,10 +131,10 @@ func _color(x: int, z: int) -> Color:
 	match layer:
 		0:
 			var c: Color = BIOME_COLORS.get(gen.biome(x, z, int(h)), Color.MAGENTA)  # magenta = biome without a color here
-			return c.darkened(clampf((40.0 - h) * 0.01, -0.3, 0.3))  # a little relief
+			return c.darkened(clampf((40.0 + WorldGen.DEPTH - h) * 0.01, -0.3, 0.3))  # a little relief
 		1:
 			if h < WorldGen.WATER_LEVEL:
-				return Color(0.1, 0.2, 0.5).lerp(Color(0.3, 0.5, 0.9), h / WorldGen.WATER_LEVEL)
+				return Color(0.1, 0.2, 0.5).lerp(Color(0.3, 0.5, 0.9), clampf((h - WorldGen.DEPTH) / (WorldGen.WATER_LEVEL - WorldGen.DEPTH), 0, 1))
 			var k := clampf((h - WorldGen.WATER_LEVEL) / 90.0, 0, 1)
 			return Color.from_hsv(0.33 - k * 0.33, 0.6, 0.4 + k * 0.6)
 		2: return _signed(gen.temperature.get_noise_2d(x, z), Color(0.2, 0.4, 1), Color(1, 0.3, 0.1))
@@ -131,7 +166,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		return
 	var step := zoom * SIZE / 4
 	match e.keycode:
-		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7: layer = e.keycode - KEY_1
+		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8: layer = e.keycode - KEY_1
 		KEY_W, KEY_UP: center.y -= step
 		KEY_S, KEY_DOWN: center.y += step
 		KEY_A, KEY_LEFT: center.x -= step

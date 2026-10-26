@@ -43,6 +43,9 @@ const TUFT_TILES := [[], [Color(0.9, 0.18, 0.15), Color(0.35, 0.08, 0.06)], [Col
 const H_DIRS: Array[Vector3i] = [Vector3i.RIGHT, Vector3i.LEFT, Vector3i.BACK, Vector3i.FORWARD]
 const N_OFF := [1, -1, CHUNK * CHUNK, -CHUNK * CHUNK, CHUNK, -CHUNK]  # column index offsets matching VoxelMesh.DIRS
 const NAV_ID_OFFSET := 1 << 20
+# AO_OFF[k][corner * 3 + 0..2]: column-index offsets of the 3 cells shading each corner of a face
+# in direction k (side, other side, diagonal), for blocks away from the column's edges.
+static var AO_OFF: Array[PackedInt32Array] = []
 const XRAY_MAX := 9  # matches view_clip.gdshaderinc
 
 @export var flat := false  # debug map: endless flat plain
@@ -58,6 +61,10 @@ var tree_left := {}  # tree cell -> wood left, for trees cut down (0); from a sa
 var opaque := {}  # Vector2i -> PackedInt32Array: opaque blocks per section (buried sections aren't meshed)
 var nav_built := {}  # Vector2i -> true
 var meshed := {}  # Vector2i -> Array of SECTIONS section nodes (null = nothing to show)
+# Sections of meshed columns not built yet, one at a time within the frame budget: the ones near
+# the surface first (every column), then the deep ones (caves), only once they can show.
+var _pending_top := {}  # Vector2i -> Array of section indices
+var _pending_deep := {}
 var trees := {}  # cell -> {cell, kind, size, variant, amount}; survives its node being unloaded
 var chunk_trees := {}  # Vector2i -> Array of tree cells
 var tree_nodes := {}  # cell -> ResourceNode, only near the camera
@@ -77,7 +84,14 @@ var door_tweens := {}  # base cell -> Tween swinging that door
 # of the cut plane (top faces of blocks just under it whose cell above is solid), or null.
 var cut_y := SY
 var caps := {}
-var xray_cursor := false  # V: see through the ground around the mouse
+var xray_cursor := false:  # V: see through the ground around the mouse
+	set(v):
+		xray_cursor = v
+		_show_sections()
+# Deep sections (wholly under the column's natural ground, caves only) are hidden unless something
+# can show them: a layer cut, the cursor x-ray, or digging in that column (opened).
+var _deep_below := {}  # Vector2i -> sections whose top is at or under this y are deep
+var _opened := {}  # Vector2i -> true
 var _cut_tick := 0.0
 var _offsets: Array[Vector2i] = []  # column offsets around the focus, nearest first
 var _unload_wait := 0
@@ -85,6 +99,14 @@ var _unload_wait := 0
 
 func _ready() -> void:
 	gen = WorldGen.new(world_seed if world_seed != 0 else randi(), flat)
+	if AO_OFF.is_empty():
+		for n in VoxelMesh.DIRS:
+			var ax := VoxelMesh.axes(Vector3(n))
+			var o := PackedInt32Array()
+			for k in VoxelMesh.CORNERS:
+				for v: Vector3i in [n + Vector3i(ax[0]) * k.x, n + Vector3i(ax[1]) * k.y, n + Vector3i(ax[0]) * k.x + Vector3i(ax[1]) * k.y]:
+					o.append(v.x + CHUNK * (v.z + CHUNK * v.y))
+			AO_OFF.append(o)
 	material.shader = preload("res://shaders/terrain.gdshader")
 	water_material.shader = preload("res://shaders/water.gdshader")
 	sway.shader = preload("res://shaders/grass.gdshader")
@@ -121,8 +143,15 @@ func stream(budget_ms: float) -> void:
 			_build_nav(c)
 		elif ring <= VIEW and not meshed.has(c):
 			_mesh_column(c)
+		elif _pending_top.has(c):
+			if not _build_pending(c, _pending_top, start, budget_ms):
+				return
 		elif cut_y < SY and meshed.has(c) and not caps.has(c):
 			_build_cap(c)
+	for off in _offsets:  # surface done all around: now the underground, when it can show
+		var c := center + off
+		if _pending_deep.has(c) and (cut_y < SY or xray_cursor or _opened.has(c)) 				and not _build_pending(c, _pending_deep, start, budget_ms):
+			return
 	_unload_wait += 1
 	if _unload_wait > 30:
 		_unload_wait = 0
@@ -145,7 +174,18 @@ func load_area(center: Vector3, radius: int, with_meshes := true) -> void:
 			for z in range(-radius, radius + 1):
 				var c := cc + Vector2i(x, z)
 				if not meshed.has(c):
-					_mesh_column(c)
+					_mesh_column(c, true)
+
+
+# Builds c's waiting sections from `pending` until the budget runs out. False = out of time.
+func _build_pending(c: Vector2i, pending: Dictionary, start: int, budget_ms: float) -> bool:
+	var list: Array = pending[c]
+	while not list.is_empty():
+		if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
+			return false
+		_rebuild_section(c, list.back())  # removes it from the list
+	pending.erase(c)
+	return true
 
 
 # --- Block access ---
@@ -196,6 +236,11 @@ func set_blocks(cells: Dictionary) -> void:
 						done[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
 		if p.y == cut_y - 1 or p.y == cut_y:
 			_free_cap(c)  # the stream rebuilds it next frame
+		if p.y < _deep_below.get(c, 0) + SECTION and not _opened.has(c):
+			_opened[c] = true  # dug toward the caves: they show from now on
+			for s in SECTIONS:
+				if meshed.has(c) and meshed[c][s]:
+					meshed[c][s].visible = _section_visible(c, s)
 	for key: Vector3i in done:
 		_rebuild_section(Vector2i(key.x, key.z), key.y)
 	for p: Vector3i in cells:
@@ -285,14 +330,29 @@ func _spawn_tree(cell: Vector3i) -> void:
 
 # --- Meshes ---
 
-func _mesh_column(c: Vector2i) -> void:
+# Starts showing column c: its sections queue up for stream() (now = build them all at once).
+func _mesh_column(c: Vector2i, now := false) -> void:
 	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 		_data(c + d)  # border faces and AO read the neighbors
 	var nodes := []
 	nodes.resize(SECTIONS)
 	meshed[c] = nodes
-	for s in SECTIONS:
-		_rebuild_section(c, s)
+	if now:
+		for s in SECTIONS:
+			_rebuild_section(c, s)
+	else:
+		# Deep = wholly under the column's lowest natural ground, tunnel roof included.
+		var low := SY
+		for k: Vector2i in [Vector2i(0, 0), Vector2i(15, 0), Vector2i(0, 15), Vector2i(15, 15), Vector2i(8, 8)]:
+			low = mini(low, ground_at(c.x * CHUNK + k.x, c.y * CHUNK + k.y))
+		var top := []
+		var deep := []
+		for s in SECTIONS:
+			(deep if (s + 1) * SECTION <= low - 1 - WorldGen.CAVE_ROOF else top).append(s)
+		_deep_below[c] = low - 1 - WorldGen.CAVE_ROOF
+		_pending_top[c] = top
+		if deep:
+			_pending_deep[c] = deep
 	for cell: Vector3i in chunk_trees.get(c, []):
 		if trees.has(cell) and not tree_nodes.has(cell):
 			_spawn_tree(cell)
@@ -303,6 +363,9 @@ func _unmesh_column(c: Vector2i) -> void:
 		if n:
 			n.queue_free()
 	meshed.erase(c)
+	_deep_below.erase(c)
+	_pending_top.erase(c)
+	_pending_deep.erase(c)
 	_free_cap(c)
 	for cell: Vector3i in chunk_trees.get(c, []):
 		if tree_nodes.has(cell) and tree_nodes[cell].claims == 0:
@@ -313,13 +376,18 @@ func _unmesh_column(c: Vector2i) -> void:
 func _rebuild_section(c: Vector2i, s: int) -> void:
 	if not meshed.has(c):
 		return
+	_pending_top.get(c, []).erase(s)
+	if s in _pending_deep.get(c, []):
+		_pending_deep[c].erase(s)
+		if s <= (cut_y - 1) / SECTION:
+			_free_cap(c)  # its dark placeholder holes give way to the real caves
 	if meshed[c][s]:
 		meshed[c][s].queue_free()
 	# All air: nothing to draw (water only lies at or below WATER_LEVEL and isn't counted as opaque).
 	var empty: bool = opaque[c][s] == 0 and s * SECTION > WorldGen.WATER_LEVEL
 	meshed[c][s] = null if empty or _buried(c, s) else _build_section(c, s)
 	if meshed[c][s]:
-		meshed[c][s].visible = s * SECTION < cut_y
+		meshed[c][s].visible = _section_visible(c, s)
 
 
 # Solid all through with solid sections on every side: nothing in it can be seen.
@@ -344,6 +412,11 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 	var faces := 0
 	var water_faces := 0
 	var grass_tops: Array[Vector3i] = []
+	var col_props := false  # solid pieces shade too: then AO goes the slow way (is_solid)
+	for q: Vector3i in props:
+		if q.x >> 4 == c.x and q.z >> 4 == c.y:
+			col_props = true
+			break
 	for y in range(s * SECTION, (s + 1) * SECTION):
 		for lz in CHUNK:
 			for lx in CHUNK:
@@ -360,7 +433,10 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 							_add_water_face(wst, p, VoxelMesh.DIRS[k])
 							water_faces += 1
 					elif nb == AIR or nb == WATER:
-						_add_block_face(st, p, VoxelMesh.DIRS[k], t)
+						if inner and not col_props:
+							_add_inner_face(st, p, k, t, data, i)
+						else:
+							_add_block_face(st, p, VoxelMesh.DIRS[k], t)
 						faces += 1
 				if t == GRASS and y < SY - 1 and data[i + CHUNK * CHUNK] == AIR:
 					grass_tops.append(p + Vector3i.UP)
@@ -393,10 +469,7 @@ func set_cut(y: int) -> void:
 		m.set_shader_parameter("cut_y", float(cut_y))
 	for c: Vector2i in caps.keys():
 		_free_cap(c)
-	for c: Vector2i in meshed:
-		for s in SECTIONS:
-			if meshed[c][s]:
-				meshed[c][s].visible = s * SECTION < cut_y
+	_show_sections()
 	_apply_cut_visibility()
 	cut_changed.emit()
 
@@ -413,6 +486,20 @@ func cut_to(feet: Vector3) -> void:
 	if cut_y >= SY and top_at(floori(feet.x), floori(feet.z)) <= y:
 		return
 	set_cut(y + 2)
+
+
+func _show_sections() -> void:
+	for c: Vector2i in meshed:
+		for s in SECTIONS:
+			if meshed[c][s]:
+				meshed[c][s].visible = _section_visible(c, s)
+
+
+func _section_visible(c: Vector2i, s: int) -> bool:
+	if s * SECTION >= cut_y:
+		return false
+	var deep: bool = (s + 1) * SECTION <= _deep_below.get(c, 0)
+	return not deep or cut_y < SY or xray_cursor or _opened.has(c)
 
 
 # Up to XRAY_MAX world points the camera sees through the ground to (selected villagers, cursor).
@@ -443,6 +530,7 @@ func _build_cap(c: Vector2i) -> void:
 	if y < 0 or y >= SY - 1:
 		return
 	var data: PackedByteArray = columns[c]
+	var unbuilt: bool = _pending_deep.get(c, []).any(func(k: int) -> bool: return k <= y / SECTION)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var faces := 0
@@ -450,9 +538,13 @@ func _build_cap(c: Vector2i) -> void:
 		for lx in CHUNK:
 			var i := lx + CHUNK * (lz + CHUNK * y)
 			var t := data[i]
+			var col := Color.TRANSPARENT
 			if _opaque(t) and _opaque(data[i + CHUNK * CHUNK]):
-				var col := Color(COLORS[t], 1.0)
-				VoxelMesh.add_face(st, Vector3(c.x * CHUNK + lx, y, c.y * CHUNK + lz), Vector3.UP, [col, col, col, col], 1.0, Vector2(t, 1))
+				col = Color(COLORS[t], 1.0)
+			elif t == AIR and unbuilt:
+				col = Color(0.03, 0.03, 0.03, 1.0)  # cave not meshed yet: dark, not sky
+			if col.a > 0:
+				VoxelMesh.add_face(st, Vector3(c.x * CHUNK + lx, y, c.y * CHUNK + lz), Vector3.UP, [col, col, col, col], 1.0, Vector2(0 if t == AIR else t, 1))
 				faces += 1
 	if faces == 0:
 		return
@@ -484,6 +576,22 @@ func _add_block_face(st: SurfaceTool, p: Vector3i, n: Vector3i, t: int) -> void:
 		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(corner)
 		cols.append(Color(COLORS[t], AO_LIGHT[open]))
 	VoxelMesh.add_face(st, Vector3(p), Vector3(n), cols, 1.0, Vector2(t, 0))
+
+
+# Same as _add_block_face for a block away from the column's edges: AO read straight from the
+# column array (the hot path when meshing caves: 12 lookups per face).
+func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedByteArray, i: int) -> void:
+	var o: PackedInt32Array = AO_OFF[k]
+	var cols: Array[Color] = []
+	for j in 4:
+		var a := data[i + o[j * 3]]
+		var b := data[i + o[j * 3 + 1]]
+		var d := data[i + o[j * 3 + 2]]
+		var s1 := a != AIR and a != WATER
+		var s2 := b != AIR and b != WATER
+		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(d != AIR and d != WATER)
+		cols.append(Color(COLORS[t], AO_LIGHT[open]))
+	VoxelMesh.add_face(st, Vector3(p), Vector3(VoxelMesh.DIRS[k]), cols, 1.0, Vector2(t, 0))
 
 
 # Water surface sits a little below the block top.

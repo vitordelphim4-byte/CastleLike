@@ -158,14 +158,27 @@ Ponto de partida, medido com `bench_worldgen` em 2026-10-25:
   navegação pula seções 100% sólidas. A 10g deve trazer explorar para ≤ 45.
 - Teste: `test_deep.gd` (camadas, minério, migração de save).
 
-### 10b — Cavernas "espaguete" (túneis)
-- Túneis longos e sinuosos de 2 a 5 blocos de largura: ar onde dois ruídos 3D passam juntos perto
-  de zero (é o "espaguete" do Minecraft).
-- Ficam a partir de 4 blocos abaixo da superfície. Ainda não abrem para fora.
-- Ver na depuração: o visualizador de mundo (`run_worldgen_debug.bat`) ganha uma camada "Corte
-  vertical", para ver as cavernas de lado.
-- Teste: a proporção de ar no subsolo fica numa faixa (ex. 3–8%). A mesma seed gera as mesmas
-  cavernas. Os túneis atravessam a borda das colunas sem degrau.
+### 10b — Cavernas "espaguete" (túneis) ✅ (feito 2026-10-25)
+- Túneis sinuosos: ar onde dois ruídos 3D (`cave_a`, `cave_b`) ficam os dois perto de zero
+  (`CAVE_WIDTH`). Ficam pelo menos `CAVE_ROOF` (4) blocos abaixo da superfície, e nunca cortam leito
+  nem água. O minério das paredes aparece, porque os veios entram antes.
+- Ocupam ~4,7% do subsolo (seed 1000). O ruído vem em lote, uma fatia 16x16 por camada
+  (`get_image_3d`, em C++), e não bloco a bloco no GDScript.
+- Visualizador (`run_worldgen_debug.bat`), tecla 8, "Corte vertical": blocos vistos de lado ao longo
+  de x, com cavernas em preto, ferro em laranja e carvão em roxo.
+- Custo: geração 5,4 ms por coluna (era 2,3). Montar as malhas de todas as cavernas sairia caro:
+  30 → 73 ms por coluna, 595 KB por coluna, e o FPS caía de 55 para 44. Por isso:
+  - as malhas são montadas seção a seção dentro do orçamento por quadro (sem engasgo), primeiro a
+    superfície de todas as colunas;
+  - as seções "profundas" (inteiras abaixo do chão natural menos o teto dos túneis) só são montadas e
+    desenhadas quando podem aparecer: com o corte ligado, com o raio-X do cursor, ou numa coluna onde
+    alguém já cavou até elas. Com tudo normal, o FPS fica igual ao de antes (~55, 18 ms por quadro);
+  - enquanto a caverna sob o corte ainda não foi montada, a tampa pinta o buraco de escuro, em vez de
+    mostrar o céu;
+  - o sombreamento dos cantos (AO) lê o array direto (86 → 73 ms).
+  **Pendente na 10g**: montar malhas em threads (com o corte ligado, as cavernas distantes levam alguns
+  segundos para aparecer).
+- Teste: `test_caves.gd` (3–8% de ar, teto de 4 blocos, mesmo resultado em qualquer ordem e seed).
 
 ### 10c — Cavernas "queijo" (salões)
 - Salões grandes onde um ruído 3D de baixa frequência passa de um limite, com pilares naturais

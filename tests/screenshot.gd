@@ -91,7 +91,7 @@ func _initialize() -> void:
 		workers[0].selected = true
 	var rig: Node3D = root.get_node("Main/CameraRig")
 	var view_spot = null
-	if args.size() > 2 and args[2] in ["world", "cut", "deep"]:  # look at a mountain with water nearby
+	if args.size() > 2 and args[2] in ["world", "cut", "deep", "caves"]:  # look at a mountain with water nearby
 		var gen: WorldGen = game.world.gen
 		var best := -1.0
 		for x in range(home.x - 160, home.x + 161, 8):
@@ -143,10 +143,10 @@ func _initialize() -> void:
 		else:
 			rig.position = game.stockpile + offsets.get(args[2], Vector3.ZERO) if args.size() > 2 else workers[0].position
 		rig._update_cam()
-	if args.size() > 2 and args[2] in ["cut", "deep"]:  # slice the ground 4 layers under the camera / at the deepslate edge
-		var under: int = game.world.top_at(floori(rig.position.x), floori(rig.position.z)) - 4
-		game.world.set_cut(under if args[2] == "cut" else WorldGen.DEEP_TOP + 1)
-		for i in 30:
+	if args.size() > 2 and args[2] in ["cut", "deep", "caves"]:  # slice the ground under the camera: 4 / 24 layers down, or at the deepslate edge
+		var under: int = game.world.top_at(floori(rig.position.x), floori(rig.position.z)) - (24 if args[2] == "caves" else 4)
+		game.world.set_cut(WorldGen.DEEP_TOP + 1 if args[2] == "deep" else under)
+		for i in 150:  # deep sections stream in after the cut turns on
 			await process_frame
 	root.get_viewport().get_texture().get_image().save_png(out)
 	quit()
