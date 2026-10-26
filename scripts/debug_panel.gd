@@ -1,7 +1,8 @@
 extends PanelContainer
 ## Debug map only (debug.tscn): buttons to test the systems quickly. F1 shows / hides it.
 ## Time (skip hours, noon / midnight, 10x speed), hunger, resources, crops and bushes, animals,
-## seeing inside the ground (the hill west of the stockpile, Main._build_mine_area).
+## seeing inside the ground (the hill west of the stockpile, Main._build_mine_area), water (the lab
+## south of it, Main._build_water_lab).
 
 var status := Label.new()
 
@@ -46,6 +47,15 @@ func _ready() -> void:
 		["Ir ao prédio", _go_tower], ["Térreo", _view_tower.bind(3)], ["Paredes baixas", _view_tower.bind(1)],
 		["1º andar", _view_tower.bind(7)],
 	])
+	_row(box, "Água", [
+		["Ir ao lab", _go_lab], ["Cascata", _water.bind("mesa_edge")], ["Quebrar tanque", _break_tank],
+		["Escada", _water.bind("stairs_top")], ["Cavar ao lado do lago", _dig_pond],
+	])
+	_row(box, "", [
+		["Fonte no chão", _water.bind("flat")], ["Fonte aqui (câmera)", _water_here], ["Tirar fonte aqui", _dry_here],
+		["Água x10", func() -> void: Game.world.fluids.speed = 1.0 if Game.world.fluids.speed > 1.0 else 10.0],
+		["Reiniciar lab", func() -> void: get_parent()._build_water_lab()],
+	])
 	status.add_theme_font_size_override("font_size", 13)
 	box.add_child(status)
 	var t := Timer.new()
@@ -88,9 +98,10 @@ func _row(box: VBoxContainer, label: String, buttons: Array) -> void:
 
 
 func _refresh() -> void:
-	status.text = "%s · velocidade %dx · fome %s · infinito %s · animais %d (+%d carcaças)" % [
+	status.text = "%s · velocidade %dx · fome %s · infinito %s · animais %d (+%d carcaças) · água ativa %d%s" % [
 		Game.clock_text(), Game.speed, "ligada" if Game.hunger else "desligada", "sim" if Game.infinite else "não",
-		get_tree().get_nodes_in_group("animals").size(), get_tree().get_nodes_in_group("corpses").size()]
+		get_tree().get_nodes_in_group("animals").size(), get_tree().get_nodes_in_group("corpses").size(),
+		Game.world.fluids.active.size(), " (x10)" if Game.world.fluids.speed > 1.0 else ""]
 
 
 func _skip(hours: float) -> void:
@@ -210,3 +221,54 @@ func _view_tower(above_ground: int) -> void:
 	_go_tower()
 	Game.world.set_cut(get_parent().tower.y + above_ground)
 	Game.mode_changed.emit()
+
+
+# --- Water lab (Main._build_water_lab) ---
+
+func _go_lab() -> void:
+	var o: Vector3i = get_parent().water_lab.origin
+	var rig: Node3D = get_node("../CameraRig")
+	rig.position.x = o.x + 14
+	rig.position.z = o.z + 10
+
+
+# A source at one of the lab's spots.
+func _water(spot: String) -> void:
+	_go_lab()
+	Game.world.set_block(get_parent().water_lab[spot], World.WATER)
+
+
+func _break_tank() -> void:
+	_go_lab()
+	for p: Vector3i in get_parent().water_lab.tank_wall:
+		Game.world.set_block(p, World.AIR)
+
+
+func _dig_pond() -> void:
+	_go_lab()
+	var cells := {}
+	for p: Vector3i in get_parent().water_lab.pond_channel:
+		cells[p] = World.AIR
+	Game.world.set_blocks(cells)
+
+
+# On the ground under the camera's center.
+func _water_here() -> void:
+	var rig: Node3D = get_node("../CameraRig")
+	var x := floori(rig.position.x)
+	var z := floori(rig.position.z)
+	Game.world.set_block(Vector3i(x, Game.world.top_at(x, z), z), World.WATER)
+
+
+# The source nearest the camera's center, within 4 blocks.
+func _dry_here() -> void:
+	var rig: Node3D = get_node("../CameraRig")
+	var c := Vector3i(rig.position.floor())
+	for r in 5:
+		for x in range(-r, r + 1):
+			for z in range(-r, r + 1):
+				for y in range(-6, 7):
+					var p := c + Vector3i(x, y, z)
+					if Game.world.get_block(p) == World.WATER:
+						Game.world.set_block(p, World.AIR)
+						return

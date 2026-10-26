@@ -16,8 +16,11 @@ const SECTION_VOL := CHUNK * CHUNK * SECTION
 const VIEW := 8  # columns (Chebyshev distance) meshed around the focus; fog hides the edge
 const KEEP := VIEW + 2  # meshes farther than this are freed
 const STREAM_BUDGET_MS := 6.0
+const WATER_BUDGET_MS := 3.0  # water mesh rebuilds per frame
 # Saved as bytes: only append new types at the end. Non-cube pieces live in `props`.
-enum { AIR, GRASS, DIRT, STONE, WOOD, BRICK, SAND, SNOW, WATER, IRON_ORE, FARMLAND, DEEPSLATE, BEDROCK, COAL_ORE }
+# WATER is a source block; FLOW_1..FLOW_7 flowing water by level, FALLING a falling column (Fluids).
+enum { AIR, GRASS, DIRT, STONE, WOOD, BRICK, SAND, SNOW, WATER, IRON_ORE, FARMLAND, DEEPSLATE, BEDROCK, COAL_ORE,
+	FLOW_1, FLOW_2, FLOW_3, FLOW_4, FLOW_5, FLOW_6, FLOW_7, FALLING }
 const COLORS := {
 	GRASS: Color(0.36, 0.62, 0.25),
 	DIRT: Color(0.45, 0.30, 0.18),
@@ -91,6 +94,11 @@ var xray_cursor := false:  # V: see through the ground around the mouse
 # Deep sections (wholly under the column's natural ground, caves only) are hidden unless something
 # can show them: a layer cut, the cursor x-ray, or digging in that column (opened).
 var _deep_below := {}  # Vector2i -> sections whose top is at or under this y are deep
+var fluids := Fluids.new()
+var _water_dirty := {}  # Vector3i(cx, section, cz) -> true: water mesh to rebuild
+# ponytail: sections water reached above sea level (an all-air section there isn't meshed otherwise);
+# not saved, so after loading, water in a section with no ground at all won't show until rebuilt.
+var _wet := {}
 var _opened := {}  # Vector2i -> deep sections reaching above this y show (0 = all: dug into)
 var _cut_tick := 0.0
 var _offsets: Array[Vector2i] = []  # column offsets around the focus, nearest first
@@ -111,6 +119,8 @@ func _ready() -> void:
 	water_material.shader = preload("res://shaders/water.gdshader")
 	sway.shader = preload("res://shaders/grass.gdshader")
 	_add_void_floor()
+	fluids.world = self
+	add_child(fluids)
 	sway.set_shader_parameter("tex", _tuft_atlas())
 	for k in TUFT_TILES.size():
 		tuft_meshes.append(_tuft_mesh(k))
@@ -122,6 +132,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	stream(STREAM_BUDGET_MS)
+	_flush_water(WATER_BUDGET_MS)
 	$VoidFloor.position = Vector3(focus.x, -0.5, focus.z)
 	_cut_tick -= delta
 	if cut_y < SY and _cut_tick <= 0.0:
@@ -216,7 +227,7 @@ func get_block(p: Vector3i) -> int:
 # Blocks walking / holds things up: terrain and built blocks, plus solid pieces (windows, posts).
 func is_solid(p: Vector3i) -> bool:
 	var t := get_block(p)
-	return (t != AIR and t != WATER) or (props.has(p) and prop_shape(p).solid)
+	return (t != AIR and not is_water(t)) or (props.has(p) and prop_shape(p).solid)
 
 
 func set_block(p: Vector3i, t: int) -> void:
@@ -254,11 +265,51 @@ func set_blocks(cells: Dictionary) -> void:
 	for p: Vector3i in cells:
 		if in_bounds(p):
 			_update_nav(p)
+			fluids.wake(p)  # water next to a dug / built block moves
 	terrain_changed.emit()
 
 
+# Water cells changed by Fluids (p -> water type or AIR). Only the water meshes rebuild (queued,
+# budgeted), the terrain stays.
+func apply_water(changes: Dictionary) -> void:
+	for p: Vector3i in changes:
+		var c := Vector2i(p.x >> 4, p.z >> 4)
+		_data(c)[(p.x & 15) + CHUNK * ((p.z & 15) + CHUNK * p.y)] = changes[p]
+		dirty[c] = true
+		_wet[Vector3i(c.x, p.y / SECTION, c.y)] = true
+		for d: Vector3i in [Vector3i.ZERO] + VoxelMesh.DIRS:  # neighbor sections: their faces toward p
+			var q := p + d
+			if in_bounds(q):
+				_water_dirty[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
+		fluids.wake(p)
+	for p: Vector3i in changes:
+		_update_nav(p)
+	terrain_changed.emit()
+
+
+# Queued water meshes, a few per frame.
+func _flush_water(budget_ms: float) -> void:
+	var start := Time.get_ticks_usec()
+	for key: Vector3i in _water_dirty.keys():
+		if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
+			return
+		_water_dirty.erase(key)
+		_rebuild_water(Vector2i(key.x, key.z), key.y)
+
+
 func _opaque(t: int) -> bool:
-	return t != AIR and t != WATER
+	return t != AIR and not is_water(t)
+
+
+static func is_water(t: int) -> bool:
+	return t == WATER or (t >= FLOW_1 and t <= FALLING)
+
+
+# 8 = source or falling, 7..1 flowing, 0 = no water.
+static func water_level(t: int) -> int:
+	if t == WATER or t == FALLING:
+		return 8
+	return t - FLOW_1 + 1 if t >= FLOW_1 and t <= FLOW_7 else 0
 
 
 func _data(c: Vector2i) -> PackedByteArray:
@@ -397,7 +448,7 @@ func _rebuild_section(c: Vector2i, s: int) -> void:
 	if meshed[c][s]:
 		meshed[c][s].queue_free()
 	# All air: nothing to draw (water only lies at or below WATER_LEVEL and isn't counted as opaque).
-	var empty: bool = opaque[c][s] == 0 and s * SECTION > WorldGen.WATER_LEVEL
+	var empty: bool = opaque[c][s] == 0 and s * SECTION > WorldGen.WATER_LEVEL and not _wet.has(Vector3i(c.x, s, c.y))
 	meshed[c][s] = null if empty or _buried(c, s) else _build_section(c, s)
 	if meshed[c][s]:
 		meshed[c][s].visible = _section_visible(c, s)
@@ -420,10 +471,7 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 	var data: PackedByteArray = columns[c]
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var wst := SurfaceTool.new()
-	wst.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var faces := 0
-	var water_faces := 0
 	var grass_tops: Array[Vector3i] = []
 	var col_props := false  # solid pieces shade too: then AO goes the slow way (is_solid)
 	for q: Vector3i in props:
@@ -435,17 +483,13 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 			for lx in CHUNK:
 				var i := lx + CHUNK * (lz + CHUNK * y)
 				var t := data[i]
-				if t == AIR:
-					continue
+				if t == AIR or is_water(t):
+					continue  # water: _water_mesh
 				var p := Vector3i(c.x * CHUNK + lx, y, c.y * CHUNK + lz)
 				var inner := lx > 0 and lz > 0 and y > 0 and lx < CHUNK - 1 and lz < CHUNK - 1 and y < SY - 1
 				for k in 6:
 					var nb: int = data[i + N_OFF[k]] if inner else get_block(p + VoxelMesh.DIRS[k])
-					if t == WATER:
-						if nb == AIR:
-							_add_water_face(wst, p, VoxelMesh.DIRS[k])
-							water_faces += 1
-					elif nb == AIR or nb == WATER:
+					if nb == AIR or is_water(nb):
 						if inner and not col_props:
 							_add_inner_face(st, p, k, t, data, i)
 						else:
@@ -453,7 +497,8 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 						faces += 1
 				if t == GRASS and y < SY - 1 and data[i + CHUNK * CHUNK] == AIR:
 					grass_tops.append(p + Vector3i.UP)
-	if faces == 0 and water_faces == 0:
+	var water := _water_mesh(c, s)
+	if faces == 0 and water == null:
 		return null
 	var node := Node3D.new()
 	add_child(node)
@@ -463,14 +508,64 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 		var mi := MeshInstance3D.new()
 		mi.mesh = mesh
 		node.add_child(mi)  # no collision: picking walks the voxel grid (raycast_cells)
-	if water_faces > 0:
-		wst.set_material(water_material)
-		var wmi := MeshInstance3D.new()
-		wmi.mesh = wst.commit()
-		wmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		node.add_child(wmi)
+	if water:
+		node.add_child(water)
 	_add_tufts(node, grass_tops)
 	return node
+
+
+# The water of section s, its own mesh so the water can change without rebuilding the terrain
+# (water never changes terrain faces or AO). Surface height by level.
+func _water_mesh(c: Vector2i, s: int) -> MeshInstance3D:
+	var data: PackedByteArray = columns[c]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var faces := 0
+	for y in range(s * SECTION, (s + 1) * SECTION):
+		for lz in CHUNK:
+			for lx in CHUNK:
+				var t := data[lx + CHUNK * (lz + CHUNK * y)]
+				if not is_water(t):
+					continue
+				var p := Vector3i(c.x * CHUNK + lx, y, c.y * CHUNK + lz)
+				var h := _water_height(t, p)
+				for k in 6:
+					var n := VoxelMesh.DIRS[k]
+					var nb := get_block(p + n)
+					# Faces toward air; and the top unless more water sits on it.
+					if nb == AIR or (n == Vector3i.UP and not is_water(nb)) or (k < 2 or k > 3) and is_water(nb) 							and _water_height(nb, p + n) < h - 0.01:
+						_add_water_face(st, p, n, h)
+						faces += 1
+	if faces == 0:
+		return null
+	st.set_material(water_material)
+	var mi := MeshInstance3D.new()
+	mi.name = "Water"
+	mi.mesh = st.commit()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+func _water_height(t: int, p: Vector3i) -> float:
+	if t == FALLING or is_water(get_block(p + Vector3i.UP)):
+		return 1.0
+	return 0.88 if t == WATER else 0.1 + 0.11 * water_level(t)
+
+
+# Rebuilds only the water of section s (the terrain didn't change).
+func _rebuild_water(c: Vector2i, s: int) -> void:
+	if not meshed.has(c) or s < 0 or s >= SECTIONS:
+		return
+	var node: Node3D = meshed[c][s]
+	if node == null:
+		_rebuild_section(c, s)
+		return
+	var old := node.get_node_or_null("Water")
+	if old:
+		old.free()
+	var water := _water_mesh(c, s)
+	if water:
+		node.add_child(water)
 
 
 # Dark floor under the bedrock, following the camera: looking down a hole into caves that aren't
@@ -617,18 +712,26 @@ func _add_inner_face(st: SurfaceTool, p: Vector3i, k: int, t: int, data: PackedB
 		var a := data[i + o[j * 3]]
 		var b := data[i + o[j * 3 + 1]]
 		var d := data[i + o[j * 3 + 2]]
-		var s1 := a != AIR and a != WATER
-		var s2 := b != AIR and b != WATER
-		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(d != AIR and d != WATER)
+		var s1 := a != AIR and not is_water(a)
+		var s2 := b != AIR and not is_water(b)
+		var open := 0 if s1 and s2 else 3 - int(s1) - int(s2) - int(d != AIR and not is_water(d))
 		cols.append(Color(COLORS[t], AO_LIGHT[open]))
 	VoxelMesh.add_face(st, Vector3(p), Vector3(VoxelMesh.DIRS[k]), cols, 1.0, Vector2(t, 0))
 
 
-# Water surface sits a little below the block top.
-func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i) -> void:
-	var col := Color.WHITE
-	var drop := Vector3(0, -0.12, 0) if n == Vector3i.UP else Vector3.ZERO
-	VoxelMesh.add_face(st, Vector3(p) + drop, Vector3(n), [col, col, col, col])
+# Water face of cell p, the cell filled up to height h (sources sit a little below the block top).
+func _add_water_face(st: SurfaceTool, p: Vector3i, n: Vector3i, h: float) -> void:
+	var ax := VoxelMesh.axes(Vector3(n))
+	var c := Vector3(p) + Vector3.ONE * 0.5 + Vector3(n) * 0.5
+	var q: Array[Vector3] = []
+	for k in VoxelMesh.CORNERS:
+		var v := c + (ax[0] * k.x + ax[1] * k.y) * 0.5
+		v.y = p.y + (v.y - p.y) * h
+		q.append(v)
+	st.set_normal(Vector3(n))
+	st.set_color(Color.WHITE)
+	for i in [0, 1, 2, 0, 2, 3]:
+		st.add_vertex(q[i])
 
 
 # Tall grass and flowers on exposed grass blocks. Seeded per column so rebuilds don't reshuffle.
@@ -853,7 +956,7 @@ func raycast_cells(from: Vector3, dir: Vector3, hit: Callable, max_dist := 300.0
 
 # Feet cell: air (not water) for body + head, solid underneath.
 func walkable(p: Vector3i) -> bool:
-	return not is_solid(p) and get_block(p) != WATER and not is_solid(p + Vector3i.UP) \
+	return not is_solid(p) and not is_water(get_block(p)) and not is_solid(p + Vector3i.UP) \
 		and is_solid(p + Vector3i.DOWN)
 
 

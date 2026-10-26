@@ -6,7 +6,7 @@ extends SceneTree
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	var out := args[0] if args.size() > 0 else "user://shot.png"
-	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof", "xray", "hill", "hill_cut", "hill_cave", "tower", "tower0", "tower1", "tower_low"] else "res://main.tscn"
+	var scene := "res://debug.tscn" if args.size() > 2 and args[2] in ["debug", "ui", "roof", "xray", "hill", "hill_cut", "hill_cave", "tower", "tower0", "tower1", "tower_low", "water"] else "res://main.tscn"
 	var game := root.get_node("Game")
 	if args.size() > 4:
 		game.start_seed = int(args[4])
@@ -109,6 +109,16 @@ func _initialize() -> void:
 							view_spot = Vector3((x + wx) / 2.0, 0, (z + wz) / 2.0)
 		if view_spot == null:
 			view_spot = game.stockpile
+	if args.size() > 2 and args[2] == "water":  # debug water lab, every scenario started (Phase 10e)
+		for n in root.get_node("Main").get_children():
+			if n.has_method("_go_lab"):
+				n._water("mesa_edge")
+				n._break_tank()
+				n._water("stairs_top")
+				n._dig_pond()
+				n._water("flat")
+				game.world.fluids.speed = 10.0
+		view_spot = rig.position
 	if args.size() > 2 and args[2].begins_with("tower"):  # debug 2-floor building, floor view
 		var panel: Node = null
 		for n in root.get_node("Main").get_children():

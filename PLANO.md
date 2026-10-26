@@ -212,12 +212,61 @@ Ponto de partida, medido com `bench_worldgen` em 2026-10-25:
 - Pendente: `test_commands` falha às vezes quando todos os testes rodam juntos ("dig command
   accepted": a pedra é recusada). Passa sozinho. Investigar.
 
-### 10e — Água e lava no subsolo
-- Aquíferos: bolsões com nível de água próprio por região (lagos subterrâneos), e não água vazando
-  pelo mapa todo.
-- Lava (bloco novo) só nas cavernas mais fundas. É perigosa: aldeões evitam, e ela fica fora da
-  navegação.
-- **?** Lava agora ou junto com a fase de monstros/perigo?
+### 10e — Água estilo Minecraft
+Decidido em 2026-10-26:
+- Lava fica para a fase de perigo.
+- Aldeões andam devagar em água rasa (1 bloco) e evitam água funda.
+- **Sem** fonte infinita.
+- Rios com correnteza.
+- Colocar e tirar água só pelo debug por enquanto (balde depois).
+
+Regras (Minecraft, menos a fonte infinita):
+- **Fonte** (nível 8) e **corrente** (níveis 7..1).
+- A água cai primeiro. Ao cair, vira coluna "caindo", com nível cheio.
+- Sem ter para onde cair, espalha para os lados perdendo 1 nível por bloco, até 7 blocos da fonte.
+  Prefere os lados que levam a um buraco a até 4 blocos (ela "procura" a descida).
+- Corrente sem fonte alimentando recua e some.
+- Atualiza a cada 0,25 s, como o Minecraft (5 ticks). Só simula as células ativas (que mudaram ou
+  têm vizinho que mudou), dentro de um orçamento por quadro. Água parada não custa nada.
+
+#### 10e1 — Motor de água + laboratório de testes ✅ (feito 2026-10-26)
+- Blocos novos `FLOW_1..FLOW_7` (corrente) e `FALLING` (caindo). `WATER` é a fonte. Helpers
+  `World.is_water()` e `water_level()`.
+- `scripts/fluids.gd` (nó `Fluids`, filho do World): fila de células ativas, um passo a cada 0,25 s de
+  jogo (segue a velocidade do jogo). Só a água se atualiza; células secas só recebem água empurrada,
+  e é isso que deixa ela escolher a direção da descida. Até 4000 células por passo.
+- Cavar ou construir acorda a água vizinha (`set_blocks` → `fluids.wake`). Mudanças de água só
+  refazem a malha da água da seção (a água não muda faces nem o sombreamento do terreno), em fila,
+  com 3 ms por quadro. Navegação atualizada por célula.
+- Superfície por nível já nesta etapa: fonte a 0,88 do bloco, corrente de ~0,2 a ~0,87.
+- Laboratório no mapa de debug (sul do estoque) e linha "Água" no painel F1: Ir ao lab, Cascata,
+  Quebrar tanque, Escada, Cavar ao lado do lago, Fonte no chão, Fonte aqui (câmera), Tirar fonte
+  aqui, Água x10, Reiniciar lab. O status mostra quantas células de água estão ativas.
+- Teste: `test_water.gd` (espalha 7, seca sem fonte, cai antes de espalhar, procura a descida, não
+  cria fonte entre duas, cavar ao lado de um lago inunda).
+- Fica para a 10e2: grama aparecendo através da água rasa e transição entre níveis vizinhos.
+
+#### 10e2 — Visual da água corrente
+- Altura da superfície por nível, com cantos suavizados (média dos vizinhos, como no Minecraft).
+- Cascatas como colunas.
+- Textura que corre na direção do fluxo.
+
+#### 10e3 — Aldeões e água
+- Andar em água de 1 bloco (pés na água, cabeça no ar, chão embaixo): permitido e mais lento,
+  com peso maior no A*. Água de 2+ blocos: fora da navegação.
+- Inundação recalcula a navegação local (como já acontece quando um bloco muda).
+- Aldeão pego por água funda sai para o lado seco mais próximo.
+
+#### 10e4 — Rios com correnteza
+- Refazer os rios: nascem nas serras e descem em degraus até lagos e mar, com água corrente no
+  canal e fontes na nascente.
+- São gerados já em equilíbrio, então não custam simulação até alguém mexer neles.
+- **?** Largura e frequência dos rios novos.
+
+#### 10e5 — Lagos subterrâneos (aquíferos)
+- Bolsões de água parada em cavernas e salões, com nível próprio por região, como os aquíferos do
+  Minecraft.
+- Cavar até eles inunda o túnel (usa a 10e1).
 
 ### 10f — Escuridão e tochas
 - Luz do céu propagada por blocos, como no Minecraft: cavernas escuras, entrada clareando.

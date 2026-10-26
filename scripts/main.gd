@@ -29,6 +29,7 @@ var debug_houses: Array[Rect2i] = []
 # Debug map Phase 9 hill (see _build_mine_area): rect, ground y, chamber spot, sealed cave layer.
 var mine := {}
 var tower := {}  # debug map 2-floor building (_build_tower): rect, ground y
+var water_lab := {}  # debug map water lab (_build_water_lab): origin, rect, spots for the panel
 
 @onready var world: World = $World
 @onready var workers: Node3D = $Workers
@@ -105,6 +106,7 @@ func _ready() -> void:
 		_build_test_area()
 		_build_mine_area()
 		_build_tower()
+		_build_water_lab()
 		add_child(preload("res://scripts/debug_panel.gd").new())
 
 
@@ -203,6 +205,47 @@ func _build_tower() -> void:
 	world.add_prop(Vector3i(r.position.x + 3, y, r.position.y + 1), "furnace", Vector3i.BACK)
 	world.add_prop(Vector3i(r.position.x + 3, y + STOREY, r.position.y + 3), "kiln", Vector3i.BACK)
 	tower = {"rect": r, "y": y}
+
+
+# Debug map, south: water lab (Phase 10e). Built from scratch each call (the panel's "Reiniciar"):
+# a stone mesa (waterfall from its edge), a brick tank full of water (break its wall), a staircase
+# going down east (water runs down the steps), a pond sunk 2 deep (dig a channel beside it).
+func _build_water_lab() -> void:
+	var y := world.top_at(0, 0)
+	var o := Vector3i(-6, y, 30)
+	var rect := Rect2i(o.x - 2, o.z - 2, 34, 22)
+	var cells := {}
+	for x in range(rect.position.x, rect.end.x):  # clear: no water, flat ground
+		for z in range(rect.position.y, rect.end.y):
+			for h in range(-3, 9):
+				cells[Vector3i(x, y + h, z)] = World.GRASS if h == -1 else (World.DIRT if h < -1 else World.AIR)
+	for t: Vector3i in world.trees.keys():
+		if rect.has_point(Vector2i(t.x, t.z)):
+			world.remove_tree(t)
+	for x in 5:  # mesa, 6 high
+		for z in 5:
+			for h in 6:
+				cells[o + Vector3i(x, h, z)] = World.STONE
+	for x in 5:  # tank: brick walls 3 high, 3x3 of water 2 deep inside
+		for z in 5:
+			for h in 3:
+				var wall := x == 0 or x == 4 or z == 0 or z == 4
+				cells[o + Vector3i(8 + x, h, z)] = World.BRICK if wall else (World.WATER if h < 2 else World.AIR)
+	for k in 8:  # stairs: 7 high at the west end, one less per block east
+		for z in 3:
+			for h in 7 - k:
+				cells[o + Vector3i(15 + k, h, z)] = World.STONE
+	for x in 4:  # pond: 4x4, 2 deep, full
+		for z in 4:
+			for h in [-2, -1]:
+				cells[o + Vector3i(x, h, 10 + z)] = World.WATER
+	world.set_blocks(cells)
+	world.fluids.active.clear()  # all of it starts still
+	water_lab = {"origin": o, "rect": rect, "mesa_edge": o + Vector3i(2, 6, 4),
+		"tank_wall": [o + Vector3i(10, 0, 4), o + Vector3i(10, 1, 4)], "stairs_top": o + Vector3i(15, 7, 1),
+		"pond_channel": [o + Vector3i(4, -1, 11), o + Vector3i(5, -1, 11), o + Vector3i(6, -1, 11),
+			o + Vector3i(4, -2, 11), o + Vector3i(5, -2, 11), o + Vector3i(6, -2, 11)],
+		"flat": o + Vector3i(12, 0, 13)}
 
 
 func _unhandled_key_input(e: InputEvent) -> void:
