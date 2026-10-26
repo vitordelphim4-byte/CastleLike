@@ -53,6 +53,9 @@ const BANK_RING: Array[Vector2i] = [Vector2i(2, 0), Vector2i(-2, 0), Vector2i(0,
 	Vector2i(2, 2), Vector2i(-2, 2), Vector2i(2, -2), Vector2i(-2, -2), Vector2i(1, 0), Vector2i(-1, 0),
 	Vector2i(0, 1), Vector2i(0, -1)]
 const RIVER_TERRACE := 7.0  # river surface steps above the sea: a waterfall at each step
+const AQUIFER_SIZE := Vector3i(32, 24, 32)  # underground lake regions
+const AQUIFER_CHANCE := 0.35  # share of regions with a water level
+const AQUIFER_ROOF := 8  # no underground lakes this close to the surface
 const CAVE_FALL_CHANCE := 0.12  # per column: a spring in the roof of a tall hall
 const CAVE_FALL_MIN := 6  # air under the roof for a cave waterfall
 const VEINS := {
@@ -80,6 +83,7 @@ var temperature := FastNoiseLite.new()
 var moisture := FastNoiseLite.new()
 var iron := FastNoiseLite.new()
 var _flow_cache := {}  # Vector2i -> Vector2 (river_flow)
+var _aquifer_cache := {}  # Vector3i region -> water level (-1 dry)
 var _river_cache := {}  # Vector2i -> Vector4 (river): asked for again and again by neighbors
 var cave_a := FastNoiseLite.new()  # spaghetti tunnels: where both are near zero
 var cave_b := FastNoiseLite.new()
@@ -519,6 +523,11 @@ func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: Packe
 	if h <= 0:
 		return false
 	var opened := false
+	var lake_low := World.SY
+	var lake_high := -1
+	var levels := PackedInt32Array()  # the column sits in one aquifer region per height band
+	for band in World.SY / AQUIFER_SIZE.y + 1:
+		levels.append(_aquifer(cx * size, band * AQUIFER_SIZE.y, cz * size))
 	var a := _slices(cave_a, cx, cz, size, y0, h)
 	var b := _slices(cave_b, cx, cz, size, y0, h)
 	var c := _slices(cave_hall, cx, cz, size, y0, h)
@@ -534,18 +543,89 @@ func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: Packe
 		for i in area:
 			var tunnel := absf(da[i] - 127.5) < lim and absf(db[i] - 127.5) < lim and y <= roof[i]
 			if (tunnel or (dc[i] > hall and y <= tops[i] - HALL_ROOF)) and blocks[i + area * y] != World.WATER:
-				blocks[i + area * y] = World.AIR
+				var wet := y < tops[i] - AQUIFER_ROOF and y <= levels[y / AQUIFER_SIZE.y]
+				blocks[i + area * y] = World.WATER if wet else World.AIR
+				if wet:
+					lake_low = mini(lake_low, y)
+					lake_high = maxi(lake_high, y)
 				opened = opened or y > tops[i] - CAVE_ROOF
+	if lake_high >= 0:
+		_drain_lakes(blocks, cx, cz, size, tops, lake_low, lake_high)
 	return opened
 
 
+# Underground lakes (Minecraft aquifers): the underground is split in regions of AQUIFER_SIZE; some
+# have a water level, and cave air under it is water. Returns that level, -1 for a dry region.
+func _aquifer(wx: int, y: int, wz: int) -> int:
+	var key := Vector3i(floori(float(wx) / AQUIFER_SIZE.x), y / AQUIFER_SIZE.y, floori(float(wz) / AQUIFER_SIZE.z))
+	if _aquifer_cache.has(key):
+		return _aquifer_cache[key]
+	var h := hash(Vector4i(key.x, key.y, key.z, world_seed))
+	var level := -1
+	if (h % 1000) / 1000.0 < AQUIFER_CHANCE:
+		level = key.y * AQUIFER_SIZE.y + 3 + (h >> 10) % (AQUIFER_SIZE.y - 4)
+	if _aquifer_cache.size() > 50000:
+		_aquifer_cache.clear()
+	_aquifer_cache[key] = level
+	return level
+
+
+# Lakes stay in their basins: underground water with air beside or under it is taken out, again
+# and again until none is left. A spot in the next column counts as water if it's cave there and
+# under the same aquifer level, as air if it's cave, else as rock.
+func _drain_lakes(blocks: PackedByteArray, cx: int, cz: int, size: int, tops: PackedInt32Array, low: int, high: int) -> void:
+	var area := size * size
+	var todo: Array[Vector3i] = []  # (lx, y, lz) to check: everything once, then around what drained
+	for y in range(low, high + 1):
+		for lz in size:
+			for lx in size:
+				if blocks[lx + size * lz + area * y] == World.WATER:
+					todo.append(Vector3i(lx, y, lz))
+	while not todo.is_empty():
+		var p: Vector3i = todo.pop_back()
+		var i := p.x + size * p.z
+		if blocks[i + area * p.y] != World.WATER or p.y >= tops[i]:
+			continue
+		var dry := blocks[i + area * (p.y - 1)] == World.AIR
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			if dry:
+				break
+			var nx := p.x + d.x
+			var nz := p.z + d.y
+			if nx >= 0 and nz >= 0 and nx < size and nz < size:
+				dry = blocks[nx + size * nz + area * p.y] == World.AIR
+			else:
+				var wx := cx * size + nx
+				var wz := cz * size + nz
+				dry = _cave_at(wx, p.y, wz) and p.y > _aquifer(wx, p.y, wz)
+		if not dry:
+			continue
+		blocks[i + area * p.y] = World.AIR
+		todo.append(p + Vector3i.UP)  # water above / beside it may hang now
+		for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx := p.x + d.x
+			var nz := p.z + d.y
+			if nx >= 0 and nz >= 0 and nx < size and nz < size:
+				todo.append(Vector3i(nx, p.y, nz))
+
+
+# Is (wx, y, wz) carved as tunnel or hall? One block, for neighbors outside the column.
+func _cave_at(wx: int, y: int, wz: int) -> bool:
+	if absf(cave_a.get_noise_3d(wx, wz, y)) < CAVE_WIDTH and absf(cave_b.get_noise_3d(wx, wz, y)) < CAVE_WIDTH:
+		return true
+	var up := clampf(float(y - BEDROCK_MAX - 1) / (WATER_LEVEL - BEDROCK_MAX - 1), 0.0, 1.0)
+	return cave_hall.get_noise_3d(wx, wz, y) > lerpf(HALL_DEEP, HALL_HIGH, up)
+
+
 # Noise n over the column (cx, cz), layers y0..y0+h-1: one byte array per layer, index lx + size * lz.
-# ponytail: moves the shared noise's offset, so generation must stay on one thread (10g changes it).
+# ponytail: moves the shared noise's offset (put back after), so generation must stay on one thread
+# (10g changes it).
 func _slices(n: FastNoiseLite, cx: int, cz: int, size: int, y0: int, h: int) -> Array:
 	n.offset = Vector3(cx * size, cz * size, y0)
 	var out := []
 	for img: Image in n.get_image_3d(size, size, h, false, false):
 		out.append(img.get_data())
+	n.offset = Vector3.ZERO  # single-block lookups (_cave_at) need it at the origin
 	return out
 
 

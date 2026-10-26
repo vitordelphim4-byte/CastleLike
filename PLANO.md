@@ -314,10 +314,22 @@ Regras (Minecraft, menos a fonte infinita):
     ou embaixo, e colunas de queda sem água alimentando.
   - Água exposta ao ar caiu de 10–16% para 0–0,3%. `test_rivers` agora exige < 3%.
 
-#### 10e5 — Lagos subterrâneos (aquíferos)
-- Bolsões de água parada em cavernas e salões, com nível próprio por região, como os aquíferos do
-  Minecraft.
-- Cavar até eles inunda o túnel (usa a 10e1).
+#### 10e5 — Lagos subterrâneos (aquíferos) ✅ (feito 2026-10-26)
+- O subsolo é dividido em regiões de 32×24×32. 35% delas têm um nível de água: ar de caverna abaixo
+  dele, e a 8+ blocos da superfície, vira água parada.
+- Drenagem com fila (`_drain_lakes`): água com ar ao lado ou embaixo sai, e os vizinhos são
+  reavaliados. Ficam só lagos contidos em bacias. Na coluna vizinha, o gerador consulta o ruído de
+  caverna daquele bloco (`_cave_at`).
+- Cavar a parede de um lago inunda o buraco (motor da 10e1).
+- Seed 1000: ~12 mil células de lago perto do início, nenhuma vazando. Geração em 11,3 ms por coluna
+  (era 8,8).
+- Teste: `test_caves.gd` (lagos existem, contidos, e cavar ao lado inunda).
+- A escada do laboratório segue a regra do Minecraft (desce em fio de 1 bloco). Ficou assim.
+
+**Testes instáveis sob carga** (todos passam sozinhos, no mapa plano de debug; investigar):
+`test_commands` (pedra recusada para cavar), `test_hunt` (javali/carcaça), `test_debug_mine`
+(escada do prédio), `test_pieces`, `test_farm`. Suspeita: algo depende do tempo real (Game.real_dt)
+ou de animais andando aleatoriamente.
 
 ### 10f — Escuridão e tochas
 - Luz do céu propagada por blocos, como no Minecraft: cavernas escuras, entrada clareando.

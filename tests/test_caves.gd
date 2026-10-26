@@ -7,6 +7,8 @@ extends SceneTree
 ## villager walk at least HALL_WALK blocks (nav on a real World node). 10d: some cave mouth near
 ## the spawn leads on foot from the surface into a cave 8+ blocks down, and nothing is carved open
 ## (within CAVE_ROOF of the surface) inside OPEN_CLEAR of the spawn.
+## 10e5: seed 1000 has underground lakes near the spawn, they sit in their basins (water with air
+## beside or under it < 1%), and digging into a lake's wall on a real World floods the hole.
 
 
 func _initialize() -> void:
@@ -64,6 +66,9 @@ func _initialize() -> void:
 								return _fail("seed %d: opening at (%d, %d, %d), inside the start area" % [sd, wx, y, wz])
 		if not _mouth_walkable(sd):
 			return _fail("seed %d: no cave mouth near the spawn leads on foot into the caves" % sd)
+	var lake := _lake_check()
+	if lake != "":
+		return _fail(lake)
 	print("test_caves OK")
 	quit()
 
@@ -149,6 +154,53 @@ func _mouth_walkable(sd: int) -> bool:
 		if ok:
 			return true
 	return false
+
+
+func _lake_check() -> String:
+	var g := WorldGen.new(1000)
+	var home := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
+	var water := 0
+	var loose := 0
+	var shore := Vector3i(-1, -1, -1)  # a lake cell with rock beside it, to dig into
+	var rock := Vector3i.ZERO
+	for cx in range(-4, 5):
+		for cz in range(-4, 5):
+			var c := home + Vector2i(cx, cz)
+			var b: PackedByteArray = g.generate(c.x, c.y, 16, World.SY).blocks
+			for lz in range(1, 15):
+				for lx in range(1, 15):
+					for y in range(WorldGen.BEDROCK_MAX + 2, WorldGen.WATER_LEVEL - 10):
+						var i := lx + 16 * (lz + 16 * y)
+						if b[i] != World.WATER:
+							continue
+						water += 1
+						for o in [1, -1, 16, -16, -256]:
+							if b[i + o] == World.AIR:
+								loose += 1
+								break
+						if shore.y < 0 and b[i + 1] in [World.STONE, World.DEEPSLATE] and b[i + 2] in [World.STONE, World.DEEPSLATE] and lx < 13:
+							shore = Vector3i(c.x * 16 + lx, y, c.y * 16 + lz)
+							rock = shore + Vector3i.RIGHT
+	print("underground lakes: %d water cells, %d with air beside or under" % [water, loose])
+	if water < 200:
+		return "no underground lakes near the spawn"
+	if loose > water * 0.01:
+		return "underground lakes leak: %d of %d" % [loose, water]
+	if shore.y < 0:
+		return "no lake shore to dig into"
+	var w := World.new()
+	w.world_seed = 1000
+	root.add_child(w)
+	if w.gen == null:
+		w.gen = WorldGen.new(1000)
+	w.fluids.world = w
+	w.load_area(Vector3(shore), 1, false)
+	w.set_block(rock, World.AIR)
+	for k in 4:
+		w.fluids.step()
+	if not World.is_water(w.get_block(rock)):
+		return "dug beside an underground lake at %s: no water came in" % rock
+	return ""
 
 
 func _fail(msg: String) -> void:

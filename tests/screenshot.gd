@@ -150,6 +150,20 @@ func _initialize() -> void:
 			panel._cut(6)
 		view_spot = rig.position
 	var cut_at := -1
+	if args.size() > 2 and args[2] == "lake":  # nearest underground lake, cut just over its surface (10e5)
+		var g: WorldGen = game.world.gen
+		var hc := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
+		for r in range(0, 8):
+			for cx in range(-r, r + 1):
+				for cz in range(-r, r + 1):
+					if view_spot != null or maxi(absi(cx), absi(cz)) != r:
+						continue
+					var b: PackedByteArray = g.generate(hc.x + cx, hc.y + cz, 16, World.SY).blocks
+					for y in range(WorldGen.WATER_LEVEL - 10, WorldGen.BEDROCK_MAX, -1):
+						for i in 256:
+							if view_spot == null and b[i + 256 * y] == World.WATER and b[i + 256 * (y + 1)] == World.AIR:
+								view_spot = Vector3((hc.x + cx) * 16 + i % 16, 0, (hc.y + cz) * 16 + i / 16)
+								cut_at = y + 2
 	if args.size() > 2 and args[2] in ["fall", "cavefall"]:  # nearest river waterfall / cave waterfall (cut into its hall)
 		var g: WorldGen = game.world.gen
 		var hc := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
