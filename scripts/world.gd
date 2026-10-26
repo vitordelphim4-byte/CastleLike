@@ -91,7 +91,7 @@ var xray_cursor := false:  # V: see through the ground around the mouse
 # Deep sections (wholly under the column's natural ground, caves only) are hidden unless something
 # can show them: a layer cut, the cursor x-ray, or digging in that column (opened).
 var _deep_below := {}  # Vector2i -> sections whose top is at or under this y are deep
-var _opened := {}  # Vector2i -> true
+var _opened := {}  # Vector2i -> deep sections reaching above this y show (0 = all: dug into)
 var _cut_tick := 0.0
 var _offsets: Array[Vector2i] = []  # column offsets around the focus, nearest first
 var _unload_wait := 0
@@ -110,6 +110,7 @@ func _ready() -> void:
 	material.shader = preload("res://shaders/terrain.gdshader")
 	water_material.shader = preload("res://shaders/water.gdshader")
 	sway.shader = preload("res://shaders/grass.gdshader")
+	_add_void_floor()
 	sway.set_shader_parameter("tex", _tuft_atlas())
 	for k in TUFT_TILES.size():
 		tuft_meshes.append(_tuft_mesh(k))
@@ -121,6 +122,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	stream(STREAM_BUDGET_MS)
+	$VoidFloor.position = Vector3(focus.x, -0.5, focus.z)
 	_cut_tick -= delta
 	if cut_y < SY and _cut_tick <= 0.0:
 		_cut_tick = 0.2
@@ -150,8 +152,14 @@ func stream(budget_ms: float) -> void:
 			_build_cap(c)
 	for off in _offsets:  # surface done all around: now the underground, when it can show
 		var c := center + off
-		if _pending_deep.has(c) and (cut_y < SY or xray_cursor or _opened.has(c)) 				and not _build_pending(c, _pending_deep, start, budget_ms):
-			return
+		if _pending_deep.has(c):
+			for s: int in _pending_deep[c].duplicate():
+				if _section_visible(c, s):  # only what can show gets built
+					if (Time.get_ticks_usec() - start) > budget_ms * 1000.0:
+						return
+					_rebuild_section(c, s)
+			if _pending_deep.get(c, [1]).is_empty():
+				_pending_deep.erase(c)
 	_unload_wait += 1
 	if _unload_wait > 30:
 		_unload_wait = 0
@@ -236,8 +244,8 @@ func set_blocks(cells: Dictionary) -> void:
 						done[Vector3i(q.x >> 4, q.y / SECTION, q.z >> 4)] = true
 		if p.y == cut_y - 1 or p.y == cut_y:
 			_free_cap(c)  # the stream rebuilds it next frame
-		if p.y < _deep_below.get(c, 0) + SECTION and not _opened.has(c):
-			_opened[c] = true  # dug toward the caves: they show from now on
+		if p.y < _deep_below.get(c, 0) + SECTION and _opened.get(c, SY) > 0:
+			_opened[c] = 0  # dug toward the caves: they all show from now on
 			for s in SECTIONS:
 				if meshed.has(c) and meshed[c][s]:
 					meshed[c][s].visible = _section_visible(c, s)
@@ -262,6 +270,11 @@ func _data(c: Vector2i) -> PackedByteArray:
 func _generate(c: Vector2i) -> void:
 	var g := gen.generate(c.x, c.y, CHUNK, SY)
 	var blocks: PackedByteArray = g.blocks
+	if g.get("opened", false):  # a cave mouth / ravine: what's behind it must show
+		var y: int = int(gen.height(c.x * CHUNK + 8, c.y * CHUNK + 8)) - g.open_depth - SECTION
+		for dx in [-1, 0, 1]:
+			for dz in [-1, 0, 1]:
+				_opened[c + Vector2i(dx, dz)] = mini(_opened.get(c + Vector2i(dx, dz), SY), y)
 	if saved_columns.has(c):
 		blocks = saved_columns[c]
 		blocks.resize(CHUNK * CHUNK * SY)  # saves from before SY grew: pad the top with air
@@ -460,6 +473,23 @@ func _build_section(c: Vector2i, s: int) -> Node3D:
 	return node
 
 
+# Dark floor under the bedrock, following the camera: looking down a hole into caves that aren't
+# meshed (hidden deep, still streaming) shows darkness instead of the sky.
+func _add_void_floor() -> void:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(0.02, 0.02, 0.02)
+	var plane := PlaneMesh.new()
+	plane.size = Vector2.ONE * (VIEW + 2) * CHUNK * 2
+	plane.material = m
+	var floor_mi := MeshInstance3D.new()
+	floor_mi.name = "VoidFloor"
+	floor_mi.mesh = plane
+	floor_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	floor_mi.position.y = -0.5
+	add_child(floor_mi)
+
+
 # --- Seeing inside (layer cut, x-ray) ---
 
 # Hide every layer from y up (SY = show all). Caps on the cut plane stream in nearest first.
@@ -499,7 +529,7 @@ func _section_visible(c: Vector2i, s: int) -> bool:
 	if s * SECTION >= cut_y:
 		return false
 	var deep: bool = (s + 1) * SECTION <= _deep_below.get(c, 0)
-	return not deep or cut_y < SY or xray_cursor or _opened.has(c)
+	return not deep or cut_y < SY or xray_cursor or (s + 1) * SECTION > _opened.get(c, SY)
 
 
 # Up to XRAY_MAX world points the camera sees through the ground to (selected villagers, cursor).

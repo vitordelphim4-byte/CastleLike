@@ -7,7 +7,7 @@ class_name WorldGen
 ## Shapes are domain-warped so coasts and ranges aren't noise-blob round.
 ## Underground (Phase 10): bedrock, deepslate, ore veins, "spaghetti" tunnels (air where two 3D
 ## noises are both near zero) and "cheese" halls (a low-frequency 3D noise over a limit), as in
-## Minecraft 1.18+.
+## Minecraft 1.18+. Some tunnels open to the surface (cave mouths) and rare ravines crack it open.
 ## The spawn is searched per seed (dry, gentle land near wood), so every world starts somewhere new.
 
 const DEPTH := 64  # Phase 10a: underground added under the old world, which sits this much higher
@@ -33,6 +33,12 @@ const HALL_FREQ := 0.011
 const HALL_DEEP := 0.30  # hall noise limit at the bottom (lower = more and bigger halls)...
 const HALL_HIGH := 0.62  # ...rising to this at sea level: halls are a deep thing
 const HALL_ROOF := 12  # halls stay this many blocks under the surface
+const ENTRANCE_MASK := 0.3  # higher = fewer cave mouths
+const RAVINE_MASK := 0.42  # higher = fewer ravines
+const RAVINE_WIDTH := 0.022  # |line noise| under this at the top (about 4-6 blocks wide)
+const RAVINE_DEPTH := 55  # deepest a ravine goes, mid-mask
+const OPEN_CLEAR := START_RADIUS + 16.0  # no mouths or ravines this close to the spawn
+const MOUTH_DEPTH := 24  # how deep the game shows the caves around a cave mouth
 const VEINS := {
 	World.COAL_ORE: {"count": 7, "size": [5, 12], "depth": [3, 40]},
 	World.IRON_ORE: {"count": 4, "size": [3, 7], "depth": [6, 999]},
@@ -60,6 +66,9 @@ var iron := FastNoiseLite.new()
 var cave_a := FastNoiseLite.new()  # spaghetti tunnels: where both are near zero
 var cave_b := FastNoiseLite.new()
 var cave_hall := FastNoiseLite.new()  # cheese halls: where it's high
+var entrance := FastNoiseLite.new()  # 2D: where it's high, tunnels may open to the surface
+var ravine_line := FastNoiseLite.new()  # 2D: ravines run along its zero line...
+var ravine_mask := FastNoiseLite.new()  # ...where this is high (rare)
 
 
 func _init(seed_value: int, is_flat := false) -> void:
@@ -78,6 +87,9 @@ func _init(seed_value: int, is_flat := false) -> void:
 	_setup(cave_a, 11, CAVE_FREQ, 1, FastNoiseLite.FRACTAL_NONE)
 	_setup(cave_b, 12, CAVE_FREQ, 1, FastNoiseLite.FRACTAL_NONE)
 	_setup(cave_hall, 13, HALL_FREQ, 2, FastNoiseLite.FRACTAL_FBM)
+	_setup(entrance, 14, 0.01, 1, FastNoiseLite.FRACTAL_NONE)
+	_setup(ravine_line, 15, 0.004, 1, FastNoiseLite.FRACTAL_NONE)
+	_setup(ravine_mask, 16, 0.003, 1, FastNoiseLite.FRACTAL_NONE)
 	if not flat:
 		_find_spawn()
 
@@ -234,15 +246,49 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 			if not flat:  # the debug plain sits below water level and must stay dry
 				for y in range(top + 1, WATER_LEVEL + 1):
 					blocks[lx + size * (lz + size * y)] = World.WATER
+	# How deep under the ground this column is open to the sky (cave mouth / ravine; 0 = closed):
+	# the game shows the caves down to there.
+	var open_depth := 0
 	if not flat:
 		_veins(cx, cz, size, tops, blocks)
-		_tunnels(cx, cz, size, tops, blocks)
-	_plant(cx, cz, size, tops, blocks, trees)
-	return {"blocks": blocks, "trees": trees}
+		open_depth = _ravines(cx, cz, size, tops, blocks)
+		if _tunnels(cx, cz, size, tops, blocks):
+			open_depth = maxi(open_depth, MOUTH_DEPTH)
+	_plant(cx, cz, size, tops, blocks, trees)  # skips spots carved open (no soil left on top)
+	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth}
 
 
-# Ore veins: random walks that only turn stone / deepslate into ore. They stay inside the column
-# (a vein reaching the border stops there) so generation stays per-column.
+# Entrances and ravines stay off water, beaches and the colony's start area.
+func _can_open(wx: int, wz: int, top: int) -> bool:
+	return top > WATER_LEVEL + 1 and Vector2(wx - spawn.x, wz - spawn.y).length() > OPEN_CLEAR
+
+
+# Ravines: narrow, deep cracks along the zero line of a noise (like rivers), only where a rare mask
+# is high; deepest mid-mask, narrower toward the bottom. Returns the deepest cut here (0 = none).
+func _ravines(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> int:
+	var carved := 0
+	var area := size * size
+	for lz in size:
+		for lx in size:
+			var wx := cx * size + lx
+			var wz := cz * size + lz
+			var i := lx + size * lz
+			var m := ravine_mask.get_noise_2d(wx, wz)
+			if m < RAVINE_MASK or not _can_open(wx, wz, tops[i]):
+				continue
+			var r := absf(ravine_line.get_noise_2d(wx, wz))
+			if r >= RAVINE_WIDTH:
+				continue
+			var depth := int(RAVINE_DEPTH * smoothstep(RAVINE_MASK, RAVINE_MASK + 0.15, m))
+			var bottom := maxi(BEDROCK_MAX + 1, tops[i] - depth)
+			for y in range(bottom, tops[i] + 1):
+				var taper := 0.35 + 0.65 * float(y - bottom) / maxf(1.0, depth)  # wide at the top
+				if r < RAVINE_WIDTH * taper and blocks[i + area * y] != World.WATER:
+					blocks[i + area * y] = World.AIR
+					carved = maxi(carved, tops[i] - y)
+	return carved
+
+
 # One block of a column's underground, bottom up: bedrock, deepslate (wavy top), stone, then the
 # biome's soil.
 func _fill(blocks: PackedByteArray, i: int, y: int, top: int, surf: int, sub: int, bedrock: int, deep: int) -> void:
@@ -260,17 +306,25 @@ func _fill(blocks: PackedByteArray, i: int, y: int, top: int, surf: int, sub: in
 
 # Caves: spaghetti tunnels (both tunnel noises near zero) and cheese halls (the hall noise over a
 # limit that drops with depth: halls grow deeper down; what stays solid inside them are pillars).
+# Where the entrance mask is high, tunnels may break the surface (cave mouths). True if they did.
 # The noise comes in whole 16x16 slices per layer from get_image_3d (C++), not a call per block:
 # noise (x, z, y) with the column's offset, 0..255 for -1..1. Ore walls stay (the veins went in
 # first), bedrock and water are never carved.
-func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> void:
+func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> bool:
 	var y0 := BEDROCK_MAX + 1
 	var high := 0
-	for t in tops:
-		high = maxi(high, t)
-	var h := high - CAVE_ROOF - y0 + 1
+	var roof := PackedInt32Array()  # highest y a tunnel may take per spot: under the roof, or the top
+	roof.resize(size * size)
+	for i in size * size:
+		var wx := cx * size + i % size
+		var wz := cz * size + i / size
+		var mouth := entrance.get_noise_2d(wx, wz) > ENTRANCE_MASK and _can_open(wx, wz, tops[i])
+		roof[i] = tops[i] if mouth else tops[i] - CAVE_ROOF
+		high = maxi(high, roof[i])
+	var h := high - y0 + 1
 	if h <= 0:
-		return
+		return false
+	var opened := false
 	var a := _slices(cave_a, cx, cz, size, y0, h)
 	var b := _slices(cave_b, cx, cz, size, y0, h)
 	var c := _slices(cave_hall, cx, cz, size, y0, h)
@@ -284,9 +338,11 @@ func _tunnels(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: Packe
 		var up := clampf(float(y - y0) / (WATER_LEVEL - y0), 0.0, 1.0)
 		var hall := 127.5 * (1.0 + lerpf(HALL_DEEP, HALL_HIGH, up))
 		for i in area:
-			var tunnel := absf(da[i] - 127.5) < lim and absf(db[i] - 127.5) < lim and y <= tops[i] - CAVE_ROOF
+			var tunnel := absf(da[i] - 127.5) < lim and absf(db[i] - 127.5) < lim and y <= roof[i]
 			if (tunnel or (dc[i] > hall and y <= tops[i] - HALL_ROOF)) and blocks[i + area * y] != World.WATER:
 				blocks[i + area * y] = World.AIR
+				opened = opened or y > tops[i] - CAVE_ROOF
+	return opened
 
 
 # Noise n over the column (cx, cz), layers y0..y0+h-1: one byte array per layer, index lx + size * lz.
@@ -299,6 +355,8 @@ func _slices(n: FastNoiseLite, cx: int, cz: int, size: int, y0: int, h: int) -> 
 	return out
 
 
+# Ore veins: random walks that only turn stone / deepslate into ore. They stay inside the column
+# (a vein reaching the border stops there) so generation stays per-column.
 func _veins(cx: int, cz: int, size: int, tops: PackedInt32Array, blocks: PackedByteArray) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector3i(cx, cz, world_seed + 77))

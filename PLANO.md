@@ -194,11 +194,23 @@ Ponto de partida, medido com `bench_worldgen` em 2026-10-25:
   bordas de salões grandes. Passa sozinho; a 10g (threads) encurta essa espera.
 - Teste: `test_caves.gd` (5–15% de ar e caminhada de 16+ blocos em salões de 3 seeds).
 
-### 10d — Entradas e ravinas
-- Parte dos túneis sobe até a superfície: são as bocas de caverna nas encostas, como no Minecraft.
-- Ravinas: fendas estreitas e profundas, raras.
-- Nada perto do spawn (raio da área plana inicial), para a colônia não nascer em cima de um buraco.
-- Teste: existe entrada a pé de fora para dentro em N seeds, e nenhuma dentro da área inicial.
+### 10d — Entradas e ravinas ✅ (feito 2026-10-26)
+- Bocas de caverna: onde um ruído 2D raro (`entrance`) passa de `ENTRANCE_MASK`, o teto de 4 blocos dos
+  túneis some, e os túneis que sobem rompem a superfície (16–24% das colunas têm alguma boca).
+- Ravinas: fendas de ~4–6 blocos ao longo da linha zero de um ruído (como os rios), onde uma máscara
+  rara está alta. Descem até 55 blocos e ficam mais finas no fundo.
+- Nada de boca ou ravina a menos de `OPEN_CLEAR` (32 blocos) do início, nem em água ou praia.
+  Árvores e arbustos não nascem em pontos escavados.
+- Visibilidade: a coluna com abertura (e as 8 vizinhas) mostra as cavernas até a profundidade da
+  abertura (`open_depth`: a ravina até o fundo, a boca até 24 blocos). Seções profundas só são
+  montadas quando vão aparecer.
+- Plano escuro abaixo do leito seguindo a câmera: qualquer buraco para uma parte ainda não montada
+  mostra escuro, não céu (streaming, corte, bocas).
+- Testes: `test_caves.gd`. Em 3 seeds há caminho a pé da superfície até uma caverna 8+ blocos abaixo,
+  por uma boca, e nada aberto dentro da área inicial. `test_deep` usa a altura natural (as ravinas
+  rebaixam colunas).
+- Pendente: `test_commands` falha às vezes quando todos os testes rodam juntos ("dig command
+  accepted": a pedra é recusada). Passa sozinho. Investigar.
 
 ### 10e — Água e lava no subsolo
 - Aquíferos: bolsões com nível de água próprio por região (lagos subterrâneos), e não água vazando

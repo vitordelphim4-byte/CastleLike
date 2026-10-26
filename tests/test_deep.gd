@@ -29,8 +29,9 @@ func _initialize() -> void:
 							return _fail("deepslate too high: %d" % y)
 						if t == World.STONE and y < WorldGen.DEEP_TOP - 3:
 							return _fail("plain stone too deep: %d" % y)
-					if top < WorldGen.DEPTH:
-						return _fail("surface at %d, under the added depth" % top)
+					var ground := int(gen.height(c.x * World.CHUNK + lx, c.y * World.CHUNK + lz))  # ravines may cut lower
+					if ground < WorldGen.DEPTH:
+						return _fail("surface at %d, under the added depth" % ground)
 	for t in [World.DEEPSLATE, World.COAL_ORE, World.IRON_ORE]:
 		if counts.get(t, 0) == 0:
 			return _fail("no block of type %d in 25 columns" % t)

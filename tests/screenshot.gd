@@ -131,6 +131,14 @@ func _initialize() -> void:
 		elif args[2] == "hill_cave":
 			panel._cut(6)
 		view_spot = rig.position
+	if args.size() > 2 and args[2] == "mouth":  # nearest cave mouth / ravine to the spawn (Phase 10d)
+		var g: WorldGen = game.world.gen
+		var hc := Vector2i(g.spawn.x >> 4, g.spawn.y >> 4)
+		for r in range(1, 12):
+			for cx in range(-r, r + 1):
+				for cz in range(-r, r + 1):
+					if view_spot == null and maxi(absi(cx), absi(cz)) == r and g.generate(hc.x + cx, hc.y + cz, 16, World.SY).opened:
+						view_spot = Vector3((hc.x + cx) * 16 + 8, 0, (hc.y + cz) * 16 + 8)
 	rig.distance = float(args[1]) if args.size() > 1 else 14.0
 	if rig.distance < 8:
 		rig.pitch = deg_to_rad(25)
