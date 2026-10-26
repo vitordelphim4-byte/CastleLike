@@ -180,12 +180,19 @@ Ponto de partida, medido com `bench_worldgen` em 2026-10-25:
   segundos para aparecer).
 - Teste: `test_caves.gd` (3–8% de ar, teto de 4 blocos, mesmo resultado em qualquer ordem e seed).
 
-### 10c — Cavernas "queijo" (salões)
-- Salões grandes onde um ruído 3D de baixa frequência passa de um limite, com pilares naturais
-  (as partes que ficaram sólidas). São mais comuns no fundo.
-- Os túneis da 10b ligam os salões.
-- Teste: existe pelo menos um salão grande perto do spawn em N seeds, e um aldeão consegue andar
-  de uma ponta à outra (navegação).
+### 10c — Cavernas "queijo" (salões) ✅ (feito 2026-10-25)
+- Salões: ar onde um ruído 3D de baixa frequência (`cave_hall`, FBM com 2 oitavas) passa de um limite.
+  O limite cai com a profundidade (`HALL_HIGH` 0,62 no nível do mar → `HALL_DEEP` 0,30 no fundo),
+  então os salões ficam grandes e comuns na pedra profunda. O que sobra sólido dentro deles forma os
+  pilares. Ficam a pelo menos `HALL_ROOF` (12) blocos da superfície. Saem no mesmo laço dos túneis,
+  com o ruído em lote.
+- Medido: 9–12% do subsolo vira caverna (túneis ~5% + salões), com salões de 20–40 blocos de largura.
+  Em 3 seeds, perto do início, um aldeão anda 47–78 blocos pelas cavernas profundas (navegação).
+- Custo: geração 8 ms por coluna (era 5,4). As malhas seguem a regra da 10b (só montadas quando
+  podem aparecer).
+- Ao ligar o corte, enquanto a vizinhança ainda está sendo montada, aparecem faixas de céu nas
+  bordas de salões grandes. Passa sozinho; a 10g (threads) encurta essa espera.
+- Teste: `test_caves.gd` (5–15% de ar e caminhada de 16+ blocos em salões de 3 seeds).
 
 ### 10d — Entradas e ravinas
 - Parte dos túneis sobe até a superfície: são as bocas de caverna nas encostas, como no Minecraft.
