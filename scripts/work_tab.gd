@@ -10,6 +10,7 @@ var grid := GridContainer.new()
 
 func _ready() -> void:
 	add_to_group("work_tab")
+	UiDrag.attach(self)
 	visible = false
 	var box := VBoxContainer.new()
 	add_child(box)

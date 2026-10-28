@@ -13,7 +13,7 @@ var _syncing := false  # changing the range clamps the value and emits value_cha
 
 
 func _ready() -> void:
-	add_theme_stylebox_override("panel", preload("res://scripts/build_menu.gd").panel_style())
+	UiDrag.attach(self)
 	var box := VBoxContainer.new()
 	add_child(box)
 	var title := Label.new()

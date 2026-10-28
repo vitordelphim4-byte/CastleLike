@@ -91,6 +91,10 @@ var _last_speed := 1
 var _last_ticks := 0
 
 
+func _ready() -> void:
+	ThemeDB.get_default_theme().merge_with(UiTheme.build())  # every Control, even under Node3D
+
+
 func _process(delta: float) -> void:  # delta is already scaled by Engine.time_scale
 	var now := Time.get_ticks_usec()
 	real_dt = minf((now - _last_ticks) / 1e6, 0.1) if _last_ticks else 0.0

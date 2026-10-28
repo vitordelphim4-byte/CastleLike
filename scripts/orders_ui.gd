@@ -3,6 +3,7 @@ extends VBoxContainer
 
 
 func _ready() -> void:
+	UiDrag.attach(get_parent())  # OrdersPanel
 	Game.orders_changed.connect(_rebuild)
 	Game.mode_changed.connect(func() -> void: get_parent().visible = not Game.building)  # build menu takes this spot
 	_rebuild()

@@ -2,7 +2,7 @@ extends PanelContainer
 ## Castle Story-style build menu (left side, shown in build mode): pieces grouped by material with
 ## 3D thumbnails, the automatic roof tool and the tool bar (build / demolish / rotate / height).
 
-const GOLD := Color(0.95, 0.75, 0.3)
+const GOLD := UiTheme.GOLD
 const DIR_NAMES := ["norte", "leste", "sul", "oeste"]  # matches Game.ROT_DIRS
 
 var buttons := {}  # item -> Button
@@ -13,7 +13,7 @@ var status := Label.new()
 
 func _ready() -> void:
 	visible = false
-	add_theme_stylebox_override("panel", panel_style())
+	UiDrag.attach(self)
 	var box := VBoxContainer.new()
 	add_child(box)
 	var head := HBoxContainer.new()
@@ -86,15 +86,6 @@ func _roof_tool(parent: Node) -> void:
 		Game.roof_overhang = not Game.roof_overhang
 		Game.mode_changed.emit())
 	parent.add_child(_label("Peças avulsas, para ajustar à mão:", 13, Color(0.8, 0.8, 0.8)))
-
-
-static func panel_style() -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = Color(0.09, 0.09, 0.09, 0.93)
-	s.border_color = GOLD
-	s.border_width_right = 2
-	s.set_content_margin_all(10)
-	return s
 
 
 func _refresh() -> void:

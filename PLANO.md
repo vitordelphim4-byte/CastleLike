@@ -380,11 +380,83 @@ Foco: explorar sem engasgo. O trabalho pesado saiu da thread principal.
 
 ---
 
+## Fase 11 — HUD medieval em pixel art
+Temática adotada para toda a UI: moldura de madeira entalhada, cantos de ferro rebitado, pergaminho
+para leitura, tons terrosos, contorno escuro de 2 px, luz no alto à esquerda, sem gradiente.
+**O design já existe** (Claude Design, 2026-10-26): `HUD.dc.html` (mocks 1600×900 de todos os estados:
+normal, 3 e 20 aldeões, construção, aba Trabalho, estação, aldeão selecionado, pausa, menu) e
+`HUD Medieval Spec.dc.html` (paleta, tipografia, layout, componentes, UX, lista de sprites).
+Cada item abaixo já tem tela desenhada; é só implementar seguindo o mock. Paleta e fontes já estão
+em `scripts/ui_theme.gd`. Tudo gerado por código (imagens pintadas em `Image`, sem PNG).
+Layout: nada fixo no centro da tela (x 340–1086, y 96–840); só modais abertos pelo jogador.
+
+### 11a — Tema global ✅ (feito 2026-10-27)
+- `UiTheme` (`scripts/ui_theme.gd`): moldura 9-slice, botões em 5 estados (toggle = ouro afundado),
+  pergaminho (tooltip, popup), campos rebaixados, barras, sliders, separadores. Mesclado no tema padrão
+  do Godot pelo `Game` (vale para todo Control, mesmo debaixo de Node3D).
+- Fontes: Pixelify Sans (texto) e VT323 (números), licença OFL, em `fonts/`. Ficaram suavizadas:
+  a Pixelify não tem grade de pixel exata.
+- project.godot: filtro Nearest, stretch `canvas_items` + escala inteira, snap de controles a pixel.
+- Janelas arrastáveis e redimensionáveis (`UiDrag`): arrastar pela moldura, pelo título ou por área vazia
+  move; o canto de ferro inferior direito (com pegador) redimensiona. Não saem da tela nem ficam menores
+  que o conteúdo. Vale para Ordens, Construção, Trabalho, Estação, barra de Altura e painel de debug.
+  Posições não são salvas (voltam ao lugar padrão ao abrir o jogo). Teste: `test_ui_drag.gd`.
+- Testes: as falhas de `test_pieces`, `test_roof` e `test_view_cut` são anteriores (ver 10g).
+  **Pendente:** bordas das janelas de diálogo ainda no estilo padrão.
+
+### 11b — Barra superior, cartões e atalhos
+- Ícones em pixel art para os 9 recursos (desenho pixel a pixel já está no mock, `ICONS`), relógio em
+  campo rebaixado com números VT323, velocidade com ícones.
+- Cartões de aldeão: selo "!" quando faminto; barra de fome com cor **e** padrão (sólido / tracejado /
+  xadrez).
+- Lista compacta com 9+ aldeões (quadradinho 34×40, cartão completo no hover); acima de 20, setas para
+  rolar e famintos na frente.
+- Barra de atalhos no rodapé com teclas desenhadas (keycaps), uma por modo, no lugar do texto corrido.
+
+### 11c — Painéis existentes com mais informação
+- Ordens: ícone + cor + forma por tipo (cortar, colher, caçar, escavar, estoque, plantação; desenhos
+  já no mock, `ORDER_ICONS`), contagem por ordem ("18 árvores", "2 cervos"), botões pausar/editar/remover
+  com ícone.
+- Estoque: barra de ocupação e ícone de "cheio". Plantação: barra de maduros.
+- Construção: abas por grupo (são 6: Madeira, Pedra, Telhado, Utilidades, Produção, Iluminação) no lugar
+  da lista que rola; ferramentas como botões-ícone com a tecla no canto; caixa de status em pergaminho.
+  O beiral continua liga/desliga (o mock mostra contador por engano).
+- Estação: modo da receita em 3 botões, ícones dos ingredientes, barra do "até ter N" (7/20), % do item
+  em produção, status com ícone (ok / alerta / parado).
+- Aba Trabalho: células de prioridade com rampa de cor (1 ouro … 4 escuro, "–" rebaixado), ícone por
+  trabalho no cabeçalho, linhas alternadas.
+- Roda do mouse nos campos numéricos: ±1, Shift ±10.
+
+### 11d — Painel do aldeão e alertas
+- Painel do aldeão selecionado (direita, mesmo lugar do painel de estação): retrato grande, atividade,
+  fome em % com texto (saciado / com fome / faminto), prioridades editáveis só dele, atalho para a aba T.
+- Alertas (canto inferior direito, crescem para cima, máximo 4, o resto vira "+N alertas"):
+  perigo = aldeão faminto (fica até resolver); alerta = estoque cheio, estação parada (10 s);
+  info = falta material ao construir (6 s). Forma do ícone diz o nível (losango / triângulo / octógono).
+  Iguais se juntam em "×N". Clique esquerdo: câmera vai até o local e seleciona; direito: dispensa.
+- Aviso de falta de material ao planejar construção ("faltam 4 pedra").
+
+### 11e — Tooltip, feedback e animações
+- Tooltip em pergaminho: nome + tecla de atalho, descrição, custo com ícone, "faltam N" quando faltar.
+- Erro (sem material, ação inválida): botão treme ±2 px e ganha borda vermelha por 300 ms.
+- Tecla na barra de atalhos pisca quando o atalho é usado.
+- Painéis entram deslizando 16 px (120 ms), alertas entram da direita; tudo em passos de pixel inteiro.
+
+### 11f — Menus (depois)
+- Tela de Opções (menu principal e pausa): ainda não existe no jogo. Logo do jogo no menu principal.
+
+### Reservado no layout (sem data)
+- Minimapa (canto inferior esquerdo, 180×180) e vida/combate de soldados e arqueiros (no painel do
+  aldeão e um bloco 200×64 no rodapé). Nada aparece até os sistemas existirem.
+
+---
+
 ## Ordem e dependências
 1 Dia/noite → 2 Save → 3 Tabela de recursos/estoque → 4 Minérios/comida → 5 Animações → 6 Agricultura → 7 Animais/caça.
 8 e 9 independentes: entram quando as perguntas forem respondidas.
 10 (cavernas): 10a primeiro (tudo depende da profundidade); 10b → 10c → 10d em ordem; 10e e 10f
 independentes depois de 10c; 10g acompanha 10b/10c se os números estourarem.
+11 (HUD): 11a primeiro (tema); 11b, 11c, 11e independentes; 11d depois de 11b (usa ícones e selo).
 Depois: monstros/noite perigosa, soldados, arqueiros, biomas.
 
 ## Mapa de debug (`run_debug.bat`)

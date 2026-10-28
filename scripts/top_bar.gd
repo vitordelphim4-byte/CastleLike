@@ -13,9 +13,7 @@ var speed_buttons: Array[Button] = []
 
 
 func _ready() -> void:
-	var style: StyleBoxFlat = preload("res://scripts/build_menu.gd").panel_style()
-	style.set_content_margin_all(3)
-	add_theme_stylebox_override("panel", style)
+	add_theme_stylebox_override("panel", UiTheme.topbar())
 	row.add_theme_constant_override("separation", 6)
 	add_child(row)
 	for kind: String in Game.RESOURCES:

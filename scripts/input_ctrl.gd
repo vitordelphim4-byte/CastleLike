@@ -33,11 +33,9 @@ var tip := Label.new()  # hover info near the mouse
 
 func _ready() -> void:
 	Game.mode_changed.connect(_update_preview)
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(0.08, 0.08, 0.08, 0.85)
-	bg.set_content_margin_all(5)
-	tip.add_theme_stylebox_override("normal", bg)
-	tip.add_theme_font_size_override("font_size", 14)
+	tip.add_theme_stylebox_override("normal", UiTheme.parchment())
+	tip.add_theme_color_override("font_color", UiTheme.INK)
+	tip.add_theme_font_size_override("font_size", 16)
 	tip.visible = false
 	add_child(tip)
 	add_child(preload("res://scripts/view_slider.gd").new())

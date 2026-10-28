@@ -10,8 +10,8 @@ var title := Label.new()
 
 func _ready() -> void:
 	add_to_group("station_panel")
+	UiDrag.attach(self)
 	visible = false
-	add_theme_stylebox_override("panel", preload("res://scripts/build_menu.gd").panel_style())
 	add_child(box)
 	var t := Timer.new()
 	t.wait_time = 0.5
