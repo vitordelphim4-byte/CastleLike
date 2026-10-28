@@ -89,8 +89,9 @@ func _conditions() -> Dictionary:
 				break
 	var need := {}
 	for c: Vector3i in Game.blueprints:
-		var info: Dictionary = Pieces.ITEMS[Game.blueprints[c].item]
-		need[info.mat] = need.get(info.mat, 0) + info.cost
+		var bp: Dictionary = Game.blueprints[c]
+		var mat: String = Pieces.ITEMS[bp.item].mat
+		need[mat] = need.get(mat, 0) + bp.left
 	for mat: String in need:
 		var short: int = need[mat] - Game.stock[mat]
 		if short > 0 and not Game.infinite:

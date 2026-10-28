@@ -18,6 +18,8 @@ func _initialize() -> void:
 	for item: String in Pieces.ITEMS:
 		if item == "ladder":
 			continue  # needs a wall; covered by test_ladder
+		if Pieces.beds(item) > 0:
+			continue  # 5x5 houses don't fit the row; covered by test_house
 		cells[Vector3i(x, y, s.z - 4)] = item
 		x += 2
 	for c: Vector3i in cells:
@@ -26,7 +28,7 @@ func _initialize() -> void:
 	_check(game.blueprints.size() == cells.size(), "all %d pieces planned, got %d" % [cells.size(), game.blueprints.size()])
 
 	if not await _wait(func() -> bool: return game.blueprints.is_empty(), 6000):
-		_fail("still planned: %s" % [game.blueprints.keys()])
+		_fail("still planned: %s" % [game.blueprints])
 		return
 	for c: Vector3i in cells:
 		var item: String = cells[c]

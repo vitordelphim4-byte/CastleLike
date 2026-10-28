@@ -29,8 +29,10 @@ const SHAPES := {
 	"peak": {"solid": false, "floor": 0.5, "roof": true},
 	"kiln": {"solid": true, "faces": true, "size": Vector3i(2, 2, 2), "station": true},
 	"furnace": {"solid": true, "faces": true, "size": Vector3i(2, 2, 2), "station": true},
+	# Ready-made building (Houses): built whole from several loads; beds = villagers sleeping in it.
+	"small_house": {"solid": true, "faces": true, "size": Vector3i(5, 6, 5), "beds": 2},
 }
-const GROUPS := ["Madeira", "Pedra", "Telhado", "Utilidades", "Produção", "Iluminação"]
+const GROUPS := ["Madeira", "Pedra", "Telhado", "Utilidades", "Produção", "Iluminação", "Casas"]
 # Shingle colors (two alternating rows): wood = red-brown shingles, stone = blue-grey slate.
 const ROOF_COLORS := {"wood": [Color(0.62, 0.33, 0.2), Color(0.52, 0.27, 0.16)],
 	"stone": [Color(0.44, 0.49, 0.57), Color(0.36, 0.4, 0.47)]}
@@ -60,7 +62,10 @@ const ITEMS := {
 	"furnace": {"name": "Fornalha", "group": "Produção", "shape": "furnace", "mat": "stone", "cost": 8},
 	"torch": {"name": "Tocha", "group": "Iluminação", "shape": "torch", "mat": "wood", "cost": 1},
 	"lantern": {"name": "Poste de luz", "group": "Iluminação", "shape": "lantern", "mat": "stone", "cost": 2},
+	"small_house": {"name": "Casa pequena", "group": "Casas", "shape": "small_house", "mat": "wood", "cost": 30},
 }
+# Pieces are carried to the site in loads of at most this much (big buildings take several trips).
+const LOAD := 8
 const GLASS := Color(0.62, 0.85, 1.0)
 const FLAME := Color(1, 0.72, 0.2)
 const EMBER := Color(1, 0.45, 0.1)
@@ -84,6 +89,10 @@ static func size(item: String) -> Vector3i:
 static func origin(item: String, c: Vector3i) -> Vector3:
 	var sz := size(item)
 	return Vector3(c) + Vector3(sz.x / 2.0, 0, sz.z / 2.0)
+
+
+static func beds(item: String) -> int:
+	return shape(item).get("beds", 0)
 
 
 static func stacks(item: String) -> bool:
@@ -286,6 +295,8 @@ static func _voxels(item: String) -> Dictionary:
 			_furnace(v)
 		"kiln":
 			_kiln(v)
+		"small_house":
+			Houses.small_house(v)
 	return v
 
 

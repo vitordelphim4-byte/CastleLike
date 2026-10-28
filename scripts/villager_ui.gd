@@ -1,6 +1,6 @@
 extends PanelContainer
 ## Selected villager panel (right side, the station panel's spot; HUD mock): big portrait, what they're
-## doing, hunger, and their own work priorities (editable, same cells as the work tab).
+## doing, hunger, sleep, and their own work priorities (editable, same cells as the work tab).
 ## Opens when exactly one villager gets selected (card or click in the world); × / Esc close it.
 
 const WorkTab := preload("res://scripts/work_tab.gd")
@@ -14,6 +14,9 @@ var activity := Label.new()
 var hunger := ProgressBar.new()
 var hunger_pct := UiTheme.num(20)
 var hunger_word := UiTheme.caption("")
+var sleep := ProgressBar.new()
+var sleep_pct := UiTheme.num(20)
+var _sleep_level := -1
 var cells := {}  # work -> Button
 var _level := -1
 
@@ -67,6 +70,15 @@ func _ready() -> void:
 	word_row.add_child(pad)
 	word_row.add_child(hunger_word)
 	info.add_child(word_row)
+	var sleep_row := HBoxContainer.new()
+	sleep_row.add_theme_constant_override("separation", 8)
+	sleep.custom_minimum_size = Vector2(160, 12)
+	sleep.max_value = 1.0
+	sleep.show_percentage = false
+	sleep.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sleep_row.add_child(sleep)
+	sleep_row.add_child(sleep_pct)
+	info.add_child(_field("SONO", sleep_row))
 
 	var prio_head := HBoxContainer.new()
 	prio_head.add_theme_constant_override("separation", 6)
@@ -143,6 +155,7 @@ func open(w: Worker) -> void:
 		grid.add_child(b)
 		cells[work] = b
 	_level = -1
+	_sleep_level = -1
 	if not visible:
 		UiFx.slide_in(self, Vector2.RIGHT)
 	visible = true
@@ -167,5 +180,12 @@ func _refresh() -> void:
 		_level = level
 		hunger.add_theme_stylebox_override("fill", UiTheme.bar_fill(level))
 		hunger_word.text = ["Alimentado", "Com fome", "Faminto"][level]
+	sleep.value = worker.rest
+	sleep_pct.text = "%d%%" % roundi(worker.rest * 100)
+	var tired := 0 if worker.rest >= Worker.TIRED else (1 if worker.rest > 0 else 2)
+	if tired != _sleep_level:
+		_sleep_level = tired
+		sleep.add_theme_stylebox_override("fill", UiTheme.bar_fill(tired))
+		sleep.tooltip_text = ["Descansado", "Cansado", "Exausto"][tired]
 	for work: String in cells:  # the work tab may have changed them
 		WorkTab.paint(cells[work], worker.priorities[work])

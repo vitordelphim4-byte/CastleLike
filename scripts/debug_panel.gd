@@ -23,6 +23,9 @@ func _ready() -> void:
 		["Liga/desliga", func() -> void: Game.hunger = not Game.hunger],
 		["Todos com fome", _feed.bind(0.25)], ["Famintos", _feed.bind(0.0)], ["Alimentar", _feed.bind(1.0)],
 	])
+	_row(box, "Sono", [
+		["Cansados", _tire.bind(0.2)], ["Exaustos", _tire.bind(0.0)], ["Descansados", _tire.bind(1.0)],
+	])
 	_row(box, "Recursos", [
 		["Infinito liga/desliga", func() -> void:
 			Game.infinite = not Game.infinite
@@ -115,6 +118,11 @@ func _set_time(t: float) -> void:
 	if t < Game.time_of_day:
 		Game.day += 1
 	Game.time_of_day = t
+
+
+func _tire(level: float) -> void:
+	for w: Worker in get_tree().get_nodes_in_group("workers"):
+		w.rest = level
 
 
 func _feed(level: float) -> void:

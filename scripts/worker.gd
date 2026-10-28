@@ -10,10 +10,18 @@ extends Node3D
 ## Hunger (RimWorld-style, simple): `food` drains over a day; below HUNGRY the villager walks to the
 ## stockpile and eats before taking the next job. At 0 (no food anywhere) it walks and works at half
 ## speed.
+## Sleep (same idea): `rest` drains over a day awake. At night when below SLEEPY (or any time below
+## TIRED) the villager goes to a house with a free bed, walks in through the door and stays inside
+## until rested and it's day. No free bed: dozes where it stands, recovering at half the speed.
+## At 0 it walks and works at half speed.
 
-enum { IDLE, MANUAL, TO_STOCK, TO_WORK, WORKING, FETCH, GATHER, TO_EAT, EATING }
+enum { IDLE, MANUAL, TO_STOCK, TO_WORK, WORKING, FETCH, GATHER, TO_EAT, EATING, TO_BED, SLEEPING }
 
 const HUNGRY := 0.3
+const TIRED := 0.25  # sleeps even in the day
+const SLEEPY := 0.75  # goes to bed at night
+const AWAKE_DAYS := 1.0  # rest 1 -> 0 awake
+const BED_DAYS := 0.25  # rest 0 -> 1 in a bed (outside: twice as long)
 const EAT_TIME := 3.0
 const STARVING_SLOWDOWN := 0.5
 const WADE_SLOWDOWN := 0.5  # walking with the feet in water
@@ -62,8 +70,11 @@ var job_task := {}
 var stock_tile := Vector3i.ZERO  # stockpile tile we're taking cargo to / fetching material from
 var no_room := false  # holding cargo with every stockpile tile full
 var food := 1.0  # 1 = full, 0 = starving
+var rest := 1.0  # 1 = rested, 0 = exhausted
+var bed := NO_SPOT  # base cell of the house we sleep in (NO_SPOT: none / on the ground)
 var eat_count := 0
 var eat_value := 0.0  # hunger filled per unit of what we're eating
+var load_n := 0  # build: material in this trip (big pieces take several)
 var job_spot := NO_SPOT  # cell beside the tree we chop from, so two choppers don't overlap
 var ring: MeshInstance3D
 var leg_l: MeshInstance3D
@@ -169,6 +180,10 @@ func _activity() -> String:
 	match state:
 		TO_EAT:
 			return "Indo comer"
+		TO_BED:
+			return "Indo dormir"
+		SLEEPING:
+			return "Dormindo" if bed != NO_SPOT else "Cochilando no chão (sem cama)"
 		EATING:
 			return "Comendo"
 		MANUAL:
@@ -199,8 +214,11 @@ func _activity() -> String:
 					var what: String = Crafting.RECIPES[job_recipe].name.to_lower()
 					return (verb + "fazer " if verb else "Fazendo ") + what
 				"build":
-					var piece: String = Pieces.ITEMS[Game.blueprints[job_cell].item].name.to_lower() \
-						if Game.blueprints.has(job_cell) else ""
+					var bp: Dictionary = Game.blueprints.get(job_cell, {})
+					var piece: String = Pieces.ITEMS[bp.item].name.to_lower() if bp else ""
+					var cost: int = Pieces.ITEMS[bp.item].cost if bp else 0
+					if cost > Pieces.LOAD:
+						piece += " (%d/%d)" % [cost - bp.left, cost]
 					return (verb + "construir " if verb else "Construindo ") + piece
 	return "Ocioso"
 
@@ -213,6 +231,11 @@ func _process(delta: float) -> void:
 		path.clear()
 	if Game.hunger:
 		food = maxf(0.0, food - delta / Game.DAY_LENGTH)
+	if state == SLEEPING:
+		var days := BED_DAYS * (1.0 if bed != NO_SPOT else 2.0)
+		rest = minf(1.0, rest + delta / (Game.DAY_LENGTH * days))
+	else:
+		rest = maxf(0.0, rest - delta / (Game.DAY_LENGTH * AWAKE_DAYS))
 	if not path.is_empty():
 		_walk(delta)
 	else:
@@ -282,8 +305,8 @@ func _update_state(delta: float) -> void:
 		FETCH:
 			var item: String = Game.blueprints[job_cell].item if Game.blueprints.has(job_cell) else ""
 			if item and _near(_tile_pos(stock_tile), 0.9) \
-					and Game.withdraw(stock_tile, Pieces.ITEMS[item].mat, Pieces.ITEMS[item].cost):
-				_set_cargo(Pieces.ITEMS[item].mat, Pieces.ITEMS[item].cost)
+					and Game.withdraw(stock_tile, Pieces.ITEMS[item].mat, load_n):
+				_set_cargo(Pieces.ITEMS[item].mat, load_n)
 				_go_to_job()
 			else:
 				_fail()
@@ -312,6 +335,16 @@ func _update_state(delta: float) -> void:
 			if timer <= 0:
 				food = minf(1.0, food + eat_count * eat_value)
 				state = IDLE
+		TO_BED:  # path ended: at the door (go in), or couldn't get there (doze here)
+			if bed != NO_SPOT and not (_bed_ok(bed) and _near(_door(bed), 1.2)):
+				bed = NO_SPOT
+			state = SLEEPING
+			visible = bed == NO_SPOT
+		SLEEPING:
+			if bed != NO_SPOT and not _bed_ok(bed):
+				_wake()  # house demolished over our head
+			elif rest >= 1.0 and not Game.is_night():
+				_wake()
 		TO_WORK:
 			if job_kind == "hunt":
 				if not _job_valid():
@@ -339,7 +372,7 @@ func _update_state(delta: float) -> void:
 				return
 			var target := _job_target()
 			rotation.y = atan2(position.x - target.x, position.z - target.z)
-			timer -= delta * (STARVING_SLOWDOWN if food <= 0 else 1.0)
+			timer -= delta * (STARVING_SLOWDOWN if food <= 0 or rest <= 0 else 1.0)
 			if timer <= 0:
 				_finish_job()
 
@@ -385,6 +418,14 @@ func _finish_job() -> void:
 			_ensure_exit()  # digging beside us can cut the way out too
 		"build":
 			var bp: Dictionary = Game.blueprints[job_cell]
+			bp.left -= load_n
+			_set_cargo("")
+			if bp.left > 0:  # more trips to go
+				bp.claimed = false
+				job_kind = ""
+				forced = false
+				state = IDLE
+				return
 			Game.blueprint_done(job_cell)
 			if Pieces.is_block(bp.item):
 				world.set_block(job_cell, Pieces.block_type(bp.item))
@@ -436,17 +477,23 @@ func _think() -> void:
 		return
 	if food < HUNGRY and _go_eat():
 		return
+	if rest < TIRED or (Game.is_night() and rest < SLEEPY):
+		_go_sleep()
+		return
 	if not _find_job():
 		return
 	tool.mesh = PeasantParts.mesh(TOOLS[job_kind]) if TOOLS.has(job_kind) else null
 	tool.rotation.y = AXE_TURN if job_kind == "wood" else 0.0
 	if job_kind == "build":
-		var item: Dictionary = Pieces.ITEMS[Game.blueprints[job_cell].item]
-		var tile = Game.withdraw_tile(item.mat, item.cost, position)
+		var bp: Dictionary = Game.blueprints[job_cell]
+		var mat: String = Pieces.ITEMS[bp.item].mat
+		var tile = Game.withdraw_tile(mat, 1, position)
 		if tile == null:
-			_fail()  # the stock is split over tiles too small for this piece's cost
+			_fail()
 			return
 		stock_tile = tile
+		var on_tile: int = Pieces.LOAD if Game.infinite else Game.zone_tile(tile).n
+		load_n = mini(bp.left, mini(Pieces.LOAD, on_tile))
 		path = world.find_path(position, _tile_pos(stock_tile))
 		state = FETCH
 	elif job_kind == "craft":
@@ -454,6 +501,51 @@ func _think() -> void:
 		_next_ingredient()
 	else:
 		_go_to_job()
+
+
+# Tired: walk to the nearest house with a free bed (TO_BED), or doze right here.
+func _go_sleep() -> void:
+	bed = NO_SPOT
+	var best_d := INF
+	var taken := {}
+	for o: Worker in get_tree().get_nodes_in_group("workers"):
+		if o != self and o.bed != NO_SPOT:
+			taken[o.bed] = taken.get(o.bed, 0) + 1
+	for c: Vector3i in world.props:
+		var p: Dictionary = world.props[c]
+		if p.base != c or Pieces.beds(p.item) <= taken.get(c, 0) or unreachable.has(c):
+			continue
+		var d := position.distance_squared_to(_door(c))
+		if d < best_d:
+			best_d = d
+			bed = c
+	if bed != NO_SPOT:
+		path = world.find_path(position, _door(bed))
+		if not path.is_empty() and path[-1].distance_to(_door(bed)) > 1.2:
+			unreachable[bed] = true  # can't get to its door
+			bed = NO_SPOT
+			path.clear()
+	state = TO_BED
+
+
+func _bed_ok(c: Vector3i) -> bool:
+	return world.props.has(c) and world.props[c].base == c and Pieces.beds(world.props[c].item) > 0
+
+
+# Ground spot just outside the house's door (its front, opposite the facing `dir`).
+func _door(c: Vector3i) -> Vector3:
+	var p: Dictionary = world.props[c]
+	var front := -Vector3(p.dir)
+	return Pieces.origin(p.item, c) + front * (Pieces.size(p.item).z / 2.0 + 0.5)
+
+
+func _wake() -> void:
+	if state == SLEEPING and bed != NO_SPOT and _bed_ok(bed):
+		position = _door(bed)  # step out of the door
+	bed = NO_SPOT
+	visible = true
+	if state in [TO_BED, SLEEPING]:
+		state = IDLE
 
 
 # Hungry: walk to the nearest stockpile tile with enough food to fill up (else any with food).
@@ -563,6 +655,8 @@ func _work_time() -> float:
 			World.STONE: return WORK_TIME.dig_stone
 			World.IRON_ORE, World.COAL_ORE: return WORK_TIME.dig_ore
 			World.DEEPSLATE: return WORK_TIME.dig_deep
+	if job_kind == "build":
+		return WORK_TIME.build * load_n
 	return WORK_TIME[job_kind]
 
 
@@ -743,7 +837,7 @@ func _find_work(work: String) -> String:
 				var bp: Dictionary = Game.blueprints[c]
 				var d := position.distance_squared_to(Vector3(c))
 				if d < best_d and not bp.claimed and Game.supported(c) and not unreachable.has(c) \
-						and Game.has_stock(Pieces.ITEMS[bp.item].mat, Pieces.ITEMS[bp.item].cost):
+						and Game.has_stock(Pieces.ITEMS[bp.item].mat):
 					best_d = d
 					job_cell = c
 			for c: Vector3i in Game.demolish:
@@ -800,6 +894,8 @@ func _job_target() -> Vector3:
 		return tree.position
 	if job_kind == "craft":
 		return Pieces.origin(Game.stations[job_cell].item, job_cell) + Vector3(0, 0.5, 0)
+	if job_kind == "build" and Game.blueprints.has(job_cell) and Pieces.size(Game.blueprints[job_cell].item).x > 1:
+		return Pieces.origin(Game.blueprints[job_cell].item, job_cell) + Vector3(0, 0.5, 0)
 	if job_kind == "hunt" or job_kind == "butcher":
 		return prey.position + Vector3(0, 0.4, 0)
 	return Vector3(job_cell) + Vector3(0.5, 0.5, 0.5)
@@ -815,8 +911,10 @@ func _in_reach() -> bool:
 		return _near(t, BOW_RANGE) and absf(t.y - position.y) < 4.0
 	if job_kind == "butcher":
 		return _near(t, 1.4)
-	if job_kind == "craft":  # stand anywhere next to the station's footprint
-		var sz := Pieces.size(Game.stations[job_cell].item)
+	var big: String = Game.stations[job_cell].item if job_kind == "craft" \
+		else (Game.blueprints[job_cell].item if job_kind == "build" and Game.blueprints.has(job_cell) else "")
+	if big and Pieces.size(big).x > 1:  # stand anywhere next to the footprint
+		var sz := Pieces.size(big)
 		return _near(t, maxi(sz.x, sz.z) / 2.0 + 1.3)
 	var dy := job_cell.y - floori(position.y)
 	return Vector2(t.x - position.x, t.z - position.z).length() <= REACH and dy >= -2 and dy <= 2
@@ -838,6 +936,7 @@ func _fail() -> void:
 
 
 func _drop_job() -> void:
+	_wake()  # player orders get sleepers up
 	match job_kind:
 		"wood", "gather":
 			if is_instance_valid(tree):
@@ -912,6 +1011,14 @@ func _animate(delta: float) -> void:
 		pose.head = Vector3(-0.3, 0, 0)  # looking up the ladder
 	elif state == WORKING:
 		_work_pose(pose)
+	elif state == SLEEPING:  # dozing outside: sitting, head on the chest
+		pose.leg_l = Vector3(1.5, 0, 0.1)
+		pose.leg_r = Vector3(1.5, 0, -0.1)
+		pose.arm_l = Vector3(0.4, 0, 0.1)
+		pose.arm_r = Vector3(0.4, 0, -0.1)
+		pose.body = Vector3(0.15, 0, 0)
+		pose.body_y = -6 * S + sin(anim_t * 1.2) * 0.25 * S
+		pose.head = Vector3(0.6, 0, 0)
 	elif state == EATING:  # hand to mouth, chewing nods
 		pose.arm_l = Vector3(0.6, 0, 0.1)
 		pose.arm_r = Vector3(2.4 + sin(anim_t * 6) * 0.3, 0, -0.25)

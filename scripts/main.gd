@@ -75,6 +75,7 @@ func _ready() -> void:
 			w.priorities.merge(info.priorities, true)  # keeps defaults for work types added since
 			w.position = info.position
 			w.food = info.get("food", 1.0)
+			w.rest = info.get("rest", 1.0)
 			w.returns = info.get("returns", {})
 			world.load_area(info.position, 1, false)  # nav under them before they look for paths
 			workers.add_child(w)
@@ -111,13 +112,14 @@ func _ready() -> void:
 
 
 # Debug map test area, east and south of the stockpile (the tests build north and in the middle):
-# workstations, iron ore and stone on the surface, bushes of every size, trees, a wheat and a
+# workstations, a small house, iron ore and stone on the surface, bushes of every size, trees, a wheat and a
 # carrot field at mixed growth stages, a stockpile holding some of every resource, one of each
 # animal.
 func _build_test_area() -> void:
 	var y := world.top_at(0, 0)
 	world.add_prop(Vector3i(12, y, 3), "kiln", Vector3i.FORWARD)
 	world.add_prop(Vector3i(15, y, 3), "furnace", Vector3i.FORWARD)
+	world.add_prop(Vector3i(20, y, 2), "small_house", Vector3i.FORWARD)  # 2 beds, door south
 	for x in range(12, 19):
 		world.set_block(Vector3i(x, y - 1, 7), World.IRON_ORE)
 		world.set_block(Vector3i(x, y - 1, 8), World.STONE)

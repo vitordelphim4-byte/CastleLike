@@ -121,6 +121,10 @@ func now() -> float:
 	return day + time_of_day
 
 
+func is_night() -> bool:
+	return time_of_day < 0.24 or time_of_day > 0.76
+
+
 func clock_text() -> String:
 	var minutes := int(time_of_day * 24 * 60)
 	return "Dia %d · %02d:%02d" % [day, minutes / 60, minutes % 60]
@@ -557,7 +561,7 @@ func place_plan(plan: Dictionary) -> void:
 func _plan_one(c: Vector3i, item: String, dir: Vector3i) -> void:
 	if not world.prop_cells(c, item).all(_free):
 		return
-	blueprints[c] = {"item": item, "dir": dir, "claimed": false}
+	blueprints[c] = {"item": item, "dir": dir, "claimed": false, "left": Pieces.ITEMS[item].cost}
 	for k in world.prop_cells(c, item):
 		planned[k] = c
 		if Pieces.shape(item).solid:
@@ -672,6 +676,13 @@ func _unblock(c: Vector3i) -> void:
 func supported(c: Vector3i) -> bool:
 	var bp: Dictionary = blueprints.get(c, {})
 	var shape: String = Pieces.ITEMS[bp.item].shape if bp else "block"
+	var sz := Pieces.size(bp.item) if bp else Vector3i.ONE
+	if sz.x > 1 or sz.z > 1:  # big pieces sit on solid ground under the whole footprint
+		for x in sz.x:
+			for z in sz.z:
+				if not world.holds(c + Vector3i(x, -1, z)):
+					return false
+		return true
 	if shape == "ladder":
 		return world.is_solid(c + bp.dir) or world.is_ladder(c + Vector3i.DOWN)
 	if world.holds(c + Vector3i.DOWN):

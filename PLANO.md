@@ -480,6 +480,32 @@ Layout: nada fixo no centro da tela (x 340–1086, y 96–840); só modais abert
 
 ---
 
+## Fase 12 — Construções prontas + sono
+Prédios inteiros (modelo voxel pronto, não visitável por dentro) em vez de bloco por bloco. O sistema
+de blocos continua para muros/torres. Referências: casa pequena, forja, moinho, casa grande.
+
+### 12a — Casa pequena + sono ✅ (feito 2026-10-28)
+- `houses.gd`: modelo da casa pequena (5×5 células, 6 de altura): base de pedra, enxaimel, telhado de
+  telha com água-furtada, chaminé de pedra, janelas acesas com floreiras, lanternas, arbustos. Grupo
+  "Casas" no menu de construção. Custo 30 madeira.
+- Construção em viagens: toda peça é levada em cargas de até 8 (`Pieces.LOAD`); o plano guarda o que
+  falta (`left`, salvo no save). Atividade mostra "(12/30)". Peças grandes exigem chão firme sob toda
+  a base. Pegar material de uma pilha parcial resolve o caso antigo da porta (2) dividida em pilhas.
+- Sono: `rest` cai em 1 dia acordado. À noite abaixo de 75% (ou a qualquer hora abaixo de 25%) o
+  aldeão vai para a casa mais próxima com cama livre (casa pequena: 2), entra pela porta e some até
+  estar descansado e ser dia. Sem cama: cochila sentado no chão, recupera na metade da velocidade.
+  Exausto (0%) trabalha na metade da velocidade. Ordens do jogador acordam. Barra SONO no painel do
+  aldeão; debug: linha "Sono" (cansados / exaustos / descansados). Casa pronta no mapa de debug (x 20).
+- Teste: `test_house.gd`.
+- **Pendente:** só 1 aldeão por vez leva material a uma casa; apagar um plano parcial perde o material
+  já entregue; barra de sono nos cartões da barra superior; alerta "sem camas".
+
+### 12b — Forja, moinho, casa grande (próximo)
+- Forja (estação de ferraria?), moinho (trigo → farinha?), casa grande (mais camas). Função de cada um
+  a decidir.
+
+---
+
 ## Ordem e dependências
 1 Dia/noite → 2 Save → 3 Tabela de recursos/estoque → 4 Minérios/comida → 5 Animações → 6 Agricultura → 7 Animais/caça.
 8 e 9 independentes: entram quando as perguntas forem respondidas.

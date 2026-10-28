@@ -135,12 +135,12 @@ static func capture(main: Node) -> Dictionary:
 		orders.append({"id": o.id, "kind": o.kind, "area": o.area, "paused": o.paused, "cells": o.cells.keys()})
 	var bps := {}
 	for c: Vector3i in Game.blueprints:
-		bps[c] = {"item": Game.blueprints[c].item, "dir": Game.blueprints[c].dir}
+		bps[c] = {"item": Game.blueprints[c].item, "dir": Game.blueprints[c].dir, "left": Game.blueprints[c].left}
 	var workers := []
 	for wk: Worker in main.get_tree().get_nodes_in_group("workers"):
 		workers.append({"name": wk.worker_name, "color": wk.color, "look": wk.look, "priorities": wk.priorities,
 			"position": wk.position, "carrying": wk.carrying, "carry_count": wk.carry_count,
-			"food": wk.food, "returns": _in_hand(wk)})
+			"food": wk.food, "rest": wk.rest, "returns": _in_hand(wk)})
 	var animals := []
 	for a in main.get_tree().get_nodes_in_group("animals") + main.get_tree().get_nodes_in_group("corpses"):
 		animals.append([a.species, a.position, a.hp, a.state == Animal.DEAD, a.marked])
@@ -207,6 +207,9 @@ static func apply_game(main: Node, data: Dictionary) -> void:
 	for c: Vector3i in data.blueprints:
 		plan[c] = data.blueprints[c]
 	Game.place_plan(plan)
+	for c: Vector3i in plan:
+		if Game.blueprints.has(c) and plan[c].has("left"):
+			Game.blueprints[c].left = plan[c].left  # material already delivered stays
 	Game.mark_demolish(Array(data.demolish, TYPE_VECTOR3I, "", null), true)
 	for s: Dictionary in data.orders:
 		var o := Game.add_order(s.kind, s.area)
