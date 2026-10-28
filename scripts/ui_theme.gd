@@ -48,8 +48,10 @@ static func _bold(base: Font) -> Font:
 
 
 # Bevelled box: [outline 2] [light/dark 2] fill. pressed = bevel inverted. shadow = +2/+2 drop.
-static func _bevel(fill: Color, light: Color, dark: Color, outline := true, shadow := false) -> StyleBoxTexture:
-	var key := "bevel%s%s%s%s%s" % [fill, light, dark, outline, shadow]
+# ring: outline color (gold = selected).
+static func _bevel(fill: Color, light: Color, dark: Color, outline := true, shadow := false,
+		ring := OUTLINE) -> StyleBoxTexture:
+	var key := "bevel%s%s%s%s%s%s" % [fill, light, dark, outline, shadow, ring]
 	if key in _cache:
 		return _cache[key].duplicate()
 	var o := 2 if outline else 0
@@ -58,7 +60,7 @@ static func _bevel(fill: Color, light: Color, dark: Color, outline := true, shad
 	var img := Image.create(n + s, n + s, false, Image.FORMAT_RGBA8)
 	if shadow:
 		img.fill_rect(Rect2i(s, s, n, n), OUTLINE)
-	img.fill_rect(Rect2i(0, 0, n, n), OUTLINE)
+	img.fill_rect(Rect2i(0, 0, n, n), ring)
 	var i := n - 2 * o  # inside the outline
 	img.fill_rect(Rect2i(o, o, i, i), light)
 	img.fill_rect(Rect2i(o + 2, o + 2, i - 2, i - 2), dark)
@@ -113,8 +115,8 @@ static func topbar() -> StyleBoxTexture:
 	var sb := _tex(img, 0, 0, 0, 8)
 	sb.content_margin_left = 10
 	sb.content_margin_right = 10
-	sb.content_margin_top = 4
-	sb.content_margin_bottom = 12
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 8
 	return sb
 
 
@@ -125,6 +127,40 @@ static func parchment(shadow := true) -> StyleBoxTexture:
 ## Sunken box: lists, fields, clock.
 static func well() -> StyleBoxTexture:
 	return _bevel(WELL, OUTLINE, WOOD_BASE, false)
+
+
+## Parchment key cap for shortcut hints (text in NUM font, INK color).
+static func keycap() -> StyleBoxTexture:
+	var sb := _bevel(PARCH, PARCH_LIGHT, PARCH_DARK)
+	sb.content_margin_left = 5
+	sb.content_margin_right = 5
+	sb.content_margin_top = 0
+	sb.content_margin_bottom = 2
+	return sb
+
+
+## Villager card / tile: "normal", "hover" or "selected" (gold ring).
+static func card(state: String) -> StyleBoxTexture:
+	var sb := _bevel(Color("#3A2618") if state == "hover" else PANEL_BG, WOOD_BASE, INK, true, false,
+		GOLD if state == "selected" else OUTLINE)
+	sb.set_content_margin_all(4)
+	return sb
+
+
+## Hunger bar fill: color and pattern both say the level (0 fed: solid, 1 hungry: dashes,
+## 2 starving: fine stripes), so it reads without color too.
+static func bar_fill(level: int) -> StyleBox:
+	if level == 0:
+		var f := _flat(OK)
+		f.set_content_margin_all(0)
+		return f
+	var w := 6 if level == 1 else 4
+	var img := Image.create(w, 4, false, Image.FORMAT_RGBA8)
+	img.fill(GOLD_DARK if level == 1 else Color("#7A1F17"))
+	img.fill_rect(Rect2i(0, 0, w - 2, 4) if level == 1 else Rect2i(0, 0, 2, 4), WARN if level == 1 else DANGER)
+	var sb := _tex(img, 0, 0, 0, 0)
+	sb.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	return sb
 
 
 static func build() -> Theme:
@@ -224,3 +260,91 @@ static func _grabber(vertical: bool, c: Color) -> ImageTexture:
 	img.fill_rect(Rect2i(4, 4, w - 6, h - 6), GOLD_DARK)
 	img.fill_rect(Rect2i(4, 4, w - 8, h - 8), c)
 	return ImageTexture.create_from_image(img)
+
+
+## Square button showing a pixel icon at exactly 2x (margins sized to fit), with a tooltip.
+static func icon_button(icon: Texture2D, tip: String, side := 22) -> Button:
+	var b := Button.new()
+	b.icon = icon
+	b.expand_icon = true
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(side, side)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var pad := (side - icon.get_width() * 2) / 2.0
+	for s: String in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var sb: StyleBox = ThemeDB.get_default_theme().get_stylebox(s, "Button").duplicate()
+		sb.set_content_margin_all(pad)
+		if s.contains("pressed"):
+			sb.content_margin_top = pad + 2
+			sb.content_margin_bottom = pad - 2
+		b.add_theme_stylebox_override(s, sb)
+	return b
+
+
+## Small dim caption heading a section ("ORDENS ATIVAS").
+static func caption(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_color_override("font_color", TEXT_DIM)
+	return l
+
+
+## A key cap label ("T", "Esc", "Roda") for shortcut hints.
+static func key_label(key: String) -> Label:
+	var k := Label.new()
+	k.text = key
+	k.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	k.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	k.custom_minimum_size = Vector2(20, 22)
+	k.add_theme_stylebox_override("normal", keycap())
+	k.add_theme_font_override("font", NUM)
+	k.add_theme_font_size_override("font_size", 18)
+	k.add_theme_color_override("font_color", INK)
+	k.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return k
+
+
+## Thin progress bar (w x h) with a flat fill color.
+static func bar(w: int, h: int, fill: Color) -> ProgressBar:
+	var b := ProgressBar.new()
+	b.show_percentage = false
+	b.custom_minimum_size = Vector2(w, h)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var f := _flat(fill)
+	f.set_content_margin_all(0)
+	b.add_theme_stylebox_override("fill", f)
+	return b
+
+
+## Number label in the tabular pixel font.
+static func num(size: int, col := TEXT) -> Label:
+	var l := Label.new()
+	l.add_theme_font_override("font", NUM)
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", col)
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return l
+
+
+## Work priority cell (1 first .. 4 last, 0 = never): a brightness ramp, "never" sunken instead of
+## raised, so it reads without color. hover: light ring.
+const PRIO := {1: ["#E8B04A", "#F6D27E", "#9C6B1E"], 2: ["#C98A3A", "#E0A85A", "#8A5A1E"],
+	3: ["#7A5838", "#94704C", "#5E432A"], 4: ["#5A4130", "#6E5240", "#3A2A1E"]}
+
+
+static func prio(level: int, hover := false) -> StyleBoxTexture:
+	var ring := TEXT if hover else OUTLINE
+	var sb: StyleBoxTexture
+	if level == 0:
+		sb = _bevel(WELL, OUTLINE, WELL, true, false, ring)
+	else:
+		sb = _bevel(Color(PRIO[level][0]), Color(PRIO[level][1]), Color(PRIO[level][2]), true, false, ring)
+	sb.set_content_margin_all(0)
+	return sb
+
+
+static func prio_font(level: int) -> Color:
+	return INK if level in [1, 2] else (Color("#A08C70") if level == 0 else TEXT)

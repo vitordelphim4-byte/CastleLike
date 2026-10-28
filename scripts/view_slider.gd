@@ -37,7 +37,7 @@ func _ready() -> void:
 # Top-right corner under the top bar, once the size is known.
 func _place() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 12)
-	position.y = 56
+	position.y = 140
 
 
 func _process(_delta: float) -> void:

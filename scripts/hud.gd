@@ -1,36 +1,81 @@
-extends Label
-## Bottom-center hints for the current mode.
+extends PanelContainer
+## Bottom-center hint bar: what the keys do in the current mode, as parchment key caps + a word each.
+## One row per context (mode, then the view cut / x-ray when on). Clicks pass through to the world.
+
+var rows := VBoxContainer.new()
 
 
 func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := UiTheme.card("normal")
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 6
+	style.content_margin_bottom = 6
+	add_theme_stylebox_override("panel", style)
+	rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_theme_constant_override("separation", 6)
+	add_child(rows)
 	Game.mode_changed.connect(_refresh)
 	_refresh()
 
 
 func _refresh() -> void:
-	text = ""
+	for c in rows.get_children():
+		rows.remove_child(c)
+		c.queue_free()
 	if Game.building:
 		if Game.build_tool == "demolish":
-			text = "DEMOLIR — arraste sobre construções para marcar (Shift desmarca)   X volta a construir"
+			_row("DEMOLIR", [[["Esq"], "arrastar · marcar"], [["Shift"], "desmarca"], [["X"], "construir"],
+				[["Esc"], "sair"]])
 		elif Game.build_tool == "roof":
-			text = "TELHADO — arraste do canto de uma parede ao canto oposto, por cima delas · R gira a cumeeira"
+			_row("TELHADO", [[["Esq"], "arrastar de canto a canto da parede"], [["R"], "gira a cumeeira"],
+				[["X"], "demolir"], [["Esc"], "sair"]])
 		else:
-			text = "CONSTRUIR %s — arraste para planejar · altura: roda ou + / - · R gira · Shift apaga planos" \
-				% Pieces.ITEMS[Game.build_item].name.to_upper()
-		text += "\nX demolir · B / botão direito / Esc sai"
+			_row("CONSTRUIR " + Pieces.ITEMS[Game.build_item].name.to_upper(), [[["Esq"], "arrastar · planejar"],
+				[["Roda", "+", "−"], "altura"], [["R"], "girar"], [["Shift"], "apaga planos"], [["X"], "demolir"],
+				[["Esc"], "sair"]])
 	elif Game.pending_area:
-		var editing: String = " (editando #%d)" % Game.pending_area.order.id if Game.pending_area.order else ""
-		text = "Arraste sobre os blocos do chão: %s%s" % [Game.ORDER_NAMES[Game.pending_area.kind], editing]
+		var title: String = Game.ORDER_NAMES[Game.pending_area.kind].to_upper()
+		if Game.pending_area.order:
+			title += " (EDITANDO #%d)" % Game.pending_area.order.id
+		var items := [[["Esq"], "arrastar sobre os blocos do chão"]]
 		if Game.pending_area.kind == "hunt":
-			text += "\nClique num animal para marcar só ele (clique de novo desmarca)"
+			items.append([["Clique"], "num animal: só ele"])
 		if Game.pending_area.kind == "dig":
-			text += "\nPROFUNDIDADE: %d camada(s) a partir da superfície (roda do mouse ou + / -)" % Game.dig_depth
-		text += "   (botão direito / Esc cancela)"
+			items.append([["Roda", "+", "−"], "profundidade: %d camada(s)" % Game.dig_depth])
+		items.append([["Dir", "Esc"], "cancelar"])
+		_row(title, items)
+	else:
+		_row("", [[["T"], "Trabalho"], [["B"], "Construção"], [["Espaço"], "Pausa"], [["1", "2", "3"], "Velocidade"]])
 	var w := Game.world
-	if w and (w.cut_y < World.SY or w.xray_cursor):
-		var view := ""
-		if w.cut_y < World.SY:
-			view = "CORTE na camada %d — barra à direita ou PageUp / PageDown (Shift = 5) · Home desliga" % w.cut_y
-		if w.xray_cursor:
-			view += (" · " if view else "") + "RAIO-X no cursor (V desliga)"
-		text += ("\n" if text else "") + view
+	if w and w.cut_y < World.SY:
+		_row("CORTE NA CAMADA %d" % w.cut_y, [[["PgUp", "PgDn"], "camada (Shift = 5)"], [["Home"], "desliga"]])
+	if w and w.xray_cursor:
+		_row("RAIO-X NO CURSOR", [[["V"], "desliga"]])
+
+
+# title (gold, may be empty) + items: [[keys...], "what it does"].
+func _row(title: String, items: Array) -> void:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 18)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rows.add_child(row)
+	if title:
+		var t := Label.new()
+		t.text = title
+		t.add_theme_font_size_override("font_size", 12)
+		t.add_theme_color_override("font_color", UiTheme.GOLD)
+		row.add_child(t)
+	for item: Array in items:
+		var pair := HBoxContainer.new()
+		pair.add_theme_constant_override("separation", 6)
+		pair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(pair)
+		for key: String in item[0]:
+			pair.add_child(UiTheme.key_label(key))
+		var l := Label.new()
+		l.text = item[1]
+		pair.add_child(l)
+

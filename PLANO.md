@@ -404,28 +404,41 @@ Layout: nada fixo no centro da tela (x 340–1086, y 96–840); só modais abert
 - Testes: as falhas de `test_pieces`, `test_roof` e `test_view_cut` são anteriores (ver 10g).
   **Pendente:** bordas das janelas de diálogo ainda no estilo padrão.
 
-### 11b — Barra superior, cartões e atalhos
-- Ícones em pixel art para os 9 recursos (desenho pixel a pixel já está no mock, `ICONS`), relógio em
-  campo rebaixado com números VT323, velocidade com ícones.
-- Cartões de aldeão: selo "!" quando faminto; barra de fome com cor **e** padrão (sólido / tracejado /
-  xadrez).
-- Lista compacta com 9+ aldeões (quadradinho 34×40, cartão completo no hover); acima de 20, setas para
-  rolar e famintos na frente.
-- Barra de atalhos no rodapé com teclas desenhadas (keycaps), uma por modo, no lugar do texto corrido.
+### 11b — Barra superior, cartões e atalhos ✅ (feito 2026-10-27)
+- Ícones em pixel art para os 9 recursos (`UiIcons`, desenho copiado do mock; recurso novo sem ícone
+  usa a miniatura 3D do monte do estoque). Números em VT323. Relógio "DIA n | hh:mm" em campo rebaixado;
+  velocidade "II 1× 2× 3×".
+- Aldeões numa faixa própria, centrada logo abaixo da barra (y 46). Cartão: retrato, nome, atividade,
+  barra de fome com cor **e** padrão (alimentado: sólido; com fome: tracejado; faminto: listras finas +
+  selo "!"), anel dourado no selecionado. Cartão com 42 px de altura (o mock tem 34; não cabiam 2
+  linhas de texto).
+- Com 9+ aldeões: quadradinho 34×40 (retrato + barra), cartão completo aparece embaixo no hover.
+  **Pendente:** acima de 20, setas para rolar e famintos na frente (só quando houver tantos aldeões).
+- Rodapé de atalhos com teclas desenhadas, uma linha por contexto (modo, corte, raio-X); cliques
+  passam para o mundo.
+- Painéis descidos para y 96 (não cobrem a faixa de aldeões); barra de Altura em y 140; Estação
+  afastada da barra de Altura.
+- Teste: `test_hud.gd` (um cartão por aldeão, selo e nível da fome, ícone para todo recurso, atalhos
+  mudam com o modo).
 
-### 11c — Painéis existentes com mais informação
-- Ordens: ícone + cor + forma por tipo (cortar, colher, caçar, escavar, estoque, plantação; desenhos
-  já no mock, `ORDER_ICONS`), contagem por ordem ("18 árvores", "2 cervos"), botões pausar/editar/remover
-  com ícone.
-- Estoque: barra de ocupação e ícone de "cheio". Plantação: barra de maduros.
-- Construção: abas por grupo (são 6: Madeira, Pedra, Telhado, Utilidades, Produção, Iluminação) no lugar
-  da lista que rola; ferramentas como botões-ícone com a tecla no canto; caixa de status em pergaminho.
-  O beiral continua liga/desliga (o mock mostra contador por engano).
-- Estação: modo da receita em 3 botões, ícones dos ingredientes, barra do "até ter N" (7/20), % do item
-  em produção, status com ícone (ok / alerta / parado).
-- Aba Trabalho: células de prioridade com rampa de cor (1 ouro … 4 escuro, "–" rebaixado), ícone por
-  trabalho no cabeçalho, linhas alternadas.
-- Roda do mouse nos campos numéricos: ±1, Shift ±10.
+### 11c — Painéis existentes com mais informação ✅ (feito 2026-10-27)
+- Ordens (`orders_ui.gd`): botões Trabalho/Construção com a tecla; "Nova ordem" em grade 2×3 com ícone
+  por tipo (placa colorida + desenho próprio, `UiIcons.order`); listas rebaixadas de ordens ativas,
+  estoques e plantações. Ordem: ícone, #id, nome, o que falta (`Game.order_info`: "66 árvores",
+  "11 blocos", "2 animais", "6 arbustos com frutas"; mesmo critério dos aldeões), pausar/retomar,
+  editar e remover como ícones. Estoque: barra de ocupação + triângulo de "cheio". Plantação: cultura
+  (clique troca) + barra de maduros. Números atualizam a cada 1 s.
+- Construção: título com tecla B, ferramentas como botões-ícone 44×44 com a tecla no canto, altura em
+  − n +, abas para os 6 grupos (2 linhas de 3: não cabem 6 em 320 px), status em pergaminho. Beiral
+  continua liga/desliga.
+- Estação: ícone e título, descrição em pergaminho, por receita: ingredientes com ícone, modo em 3
+  botões (Desligado / Repetir / Até ter N), − N + (roda do mouse ±1, Shift ±10), status com ícone
+  (ok / esperando / parado) + barra: % do item em produção, ou estoque/meta no "até ter N".
+- Aba Trabalho: título com tecla T, ícone por trabalho no cabeçalho (reaproveita ícones de recursos),
+  células com rampa de cor (1 ouro … 4 escuro, "–" rebaixado), anel claro no hover, linhas alternadas.
+- Recursos infinitos (mapa de debug): "∞" na fonte de texto (o da VT323 parece "00").
+- **Pendente:** rolagem no painel de ordens quando a lista passar da tela.
+- Teste: `test_hud.gd` (contagem de blocos e de árvores das ordens).
 
 ### 11d — Painel do aldeão e alertas
 - Painel do aldeão selecionado (direita, mesmo lugar do painel de estação): retrato grande, atividade,

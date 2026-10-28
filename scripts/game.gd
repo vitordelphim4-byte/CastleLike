@@ -440,6 +440,28 @@ func remove_order(o: Dictionary) -> void:
 	orders_changed.emit()
 
 
+# What an order still has to do, for the orders panel ("18 árvores"). Same tests the villagers use.
+func order_info(o: Dictionary) -> String:
+	if o.kind == "dig":
+		return _count(o.cells.size(), "bloco", "blocos")
+	var n := 0
+	if o.kind == "hunt":
+		for a in get_tree().get_nodes_in_group("animals"):
+			if a.state != Animal.DEAD and o.area.has_point(Vector2i(floori(a.position.x), floori(a.position.z))):
+				n += 1
+		return _count(n, "animal", "animais")
+	var kind := "wood" if o.kind == "wood" else "berries"
+	for r: ResourceNode in get_tree().get_nodes_in_group("resources"):
+		if r.kind == kind and r.available() > 0 \
+				and o.area.has_point(Vector2i(floori(r.position.x), floori(r.position.z))):
+			n += 1
+	return _count(n, "árvore", "árvores") if o.kind == "wood" else _count(n, "arbusto com frutas", "arbustos com frutas")
+
+
+static func _count(n: int, one: String, many: String) -> String:
+	return "%d %s" % [n, one if n == 1 else many]
+
+
 func toggle_pause(o: Dictionary) -> void:
 	o.paused = not o.paused
 	refresh_marker(o)
