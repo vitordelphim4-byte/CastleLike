@@ -66,10 +66,13 @@ func _unhandled_input(e: InputEvent) -> void:
 					Game.mode_changed.emit()
 			KEY_ESCAPE:
 				var panel := get_tree().get_first_node_in_group("station_panel")
+				var villager := get_tree().get_first_node_in_group("villager_panel")
 				if Game.building or Game.pending_area:
 					Game.set_building(false)
 				elif panel and panel.visible:
 					panel.close()
+				elif villager and villager.visible:
+					villager.close()
 				else:
 					get_tree().get_first_node_in_group("pause_menu").open()
 			KEY_SPACE:

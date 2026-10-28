@@ -105,27 +105,31 @@ func _rebuild() -> void:
 			var cell := CenterContainer.new()
 			cell.custom_minimum_size = Vector2(CELL_W, 26)
 			h.add_child(cell)
-			var b := Button.new()
-			b.custom_minimum_size = Vector2(60, 20)
-			b.focus_mode = Control.FOCUS_NONE
-			b.add_theme_font_override("font", UiTheme.NUM)
-			b.add_theme_font_size_override("font_size", 20)
-			b.tooltip_text = "%s · %s" % [w.worker_name, Game.WORKS[work]]
-			b.gui_input.connect(_on_cell_input.bind(b, w, work))
-			_paint(b, w.priorities[work])
+			var b := prio_cell(w, work)
 			cell.add_child(b)
 
 
-func _on_cell_input(e: InputEvent, b: Button, w: Worker, work: String) -> void:
-	if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
-		var step := 1 if e.button_index == MOUSE_BUTTON_LEFT else -1
-		var i := (CYCLE.find(w.priorities[work]) + step + CYCLE.size()) % CYCLE.size()
-		w.priorities[work] = CYCLE[i]
-		_paint(b, CYCLE[i])
-		accept_event()
+## A priority cell for villager w and work type (also used by the villager panel). Left click:
+## 1→2→3→4→–→1, right click: reverse.
+static func prio_cell(w: Worker, work: String, width := 60) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(width, 20)
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_override("font", UiTheme.NUM)
+	b.add_theme_font_size_override("font_size", 20)
+	b.tooltip_text = "%s · %s" % [w.worker_name, Game.WORKS[work]]
+	b.gui_input.connect(func(e: InputEvent) -> void:
+		if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+			var step := 1 if e.button_index == MOUSE_BUTTON_LEFT else -1
+			var i := (CYCLE.find(w.priorities[work]) + step + CYCLE.size()) % CYCLE.size()
+			w.priorities[work] = CYCLE[i]
+			paint(b, CYCLE[i])
+			b.accept_event())
+	paint(b, w.priorities[work])
+	return b
 
 
-func _paint(b: Button, level: int) -> void:
+static func paint(b: Button, level: int) -> void:
 	b.text = str(level) if level > 0 else "–"
 	var normal := UiTheme.prio(level)
 	var hover := UiTheme.prio(level, true)

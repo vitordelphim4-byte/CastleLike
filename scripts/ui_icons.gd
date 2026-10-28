@@ -82,7 +82,7 @@ const ORDERS := {
 
 # Small glyphs (X = light text color, R = red, A = gold, o = outline).
 const GPAL := {"o": "#140C07", "X": "#F3E6C8", "R": "#C8402F", "A": "#E8B04A", "W": "#6B4325", "w": "#B07B45",
-	"G": "#6FAE3E", "Y": "#E5A23A"}
+	"G": "#6FAE3E", "Y": "#E5A23A", "B": "#6FA8DC", "i": "#1F140C"}
 const GLYPHS := {
 	# 6x6 row actions
 	"pause": ["XX..XX", "XX..XX", "XX..XX", "XX..XX", "XX..XX", "XX..XX"],
@@ -96,10 +96,11 @@ const GLYPHS := {
 		"..oRooRo..", ".oRo..oRo.", "oRo....oRo", "oo......oo"],
 	"rotate": ["...oooo...", "..oXXXXo..", ".oXooooXo.", "oXo....oXo", "oXo..oXXXX", "oXo...oXXo",
 		"oXo....oXo", ".oXo......", "..oXXXo...", "...ooo...."],
-	# 7x7 status: ok square / warning triangle / stopped diamond
+	# 7x7 status: ok square / warning triangle / stopped diamond / info octagon
 	"ok": ["ooooooo", "oGGGGGo", "oGGGGGo", "oGGGGGo", "oGGGGGo", "oGGGGGo", "ooooooo"],
 	"warn": ["...o...", "..oYo..", "..oYo..", ".oYYYo.", ".oYYYo.", "oYYYYYo", "ooooooo"],
 	"stop": ["...o...", "..oRo..", ".oRRRo.", "oRRRRRo", ".oRRRo.", "..oRo..", "...o..."],
+	"info": [".ooooo.", "oBBiBBo", "oBBBBBo", "oBBiBBo", "oBBiBBo", "oBBiBBo", ".ooooo."],
 }
 
 

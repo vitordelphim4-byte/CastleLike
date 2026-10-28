@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://scripts/top_bar.gd" id="7_top"]
 [ext_resource type="Script" path="res://scripts/build_menu.gd" id="8_build"]
@@ -11,6 +11,8 @@
 [ext_resource type="Script" path="res://scripts/day_night.gd" id="9_day"]
 [ext_resource type="Script" path="res://scripts/menu.gd" id="10_menu"]
 [ext_resource type="Script" path="res://scripts/station_ui.gd" id="11_station"]
+[ext_resource type="Script" path="res://scripts/villager_ui.gd" id="12_villager"]
+[ext_resource type="Script" path="res://scripts/alerts.gd" id="13_alerts"]
 [ext_resource type="Script" path="res://scripts/input_ctrl.gd" id="3_input"]
 
 [sub_resource type="ProceduralSkyMaterial" id="sky_mat"]
@@ -130,11 +132,36 @@ script = ExtResource("6_work")
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -504.0
+offset_left = -548.0
 offset_top = 96.0
-offset_right = -60.0
+offset_right = -104.0
 grow_horizontal = 0
 script = ExtResource("11_station")
+
+[node name="VillagerPanel" type="PanelContainer" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -548.0
+offset_top = 96.0
+offset_right = -104.0
+grow_horizontal = 0
+script = ExtResource("12_villager")
+
+[node name="Alerts" type="VBoxContainer" parent="."]
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -258.0
+offset_top = -62.0
+offset_right = -10.0
+offset_bottom = -62.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+script = ExtResource("13_alerts")
 
 [node name="PauseMenu" type="Control" parent="."]
 layout_mode = 3

@@ -440,14 +440,21 @@ Layout: nada fixo no centro da tela (x 340–1086, y 96–840); só modais abert
 - **Pendente:** rolagem no painel de ordens quando a lista passar da tela.
 - Teste: `test_hud.gd` (contagem de blocos e de árvores das ordens).
 
-### 11d — Painel do aldeão e alertas
-- Painel do aldeão selecionado (direita, mesmo lugar do painel de estação): retrato grande, atividade,
-  fome em % com texto (saciado / com fome / faminto), prioridades editáveis só dele, atalho para a aba T.
-- Alertas (canto inferior direito, crescem para cima, máximo 4, o resto vira "+N alertas"):
-  perigo = aldeão faminto (fica até resolver); alerta = estoque cheio, estação parada (10 s);
-  info = falta material ao construir (6 s). Forma do ícone diz o nível (losango / triângulo / octógono).
-  Iguais se juntam em "×N". Clique esquerdo: câmera vai até o local e seleciona; direito: dispensa.
-- Aviso de falta de material ao planejar construção ("faltam 4 pedra").
+### 11d — Painel do aldeão e alertas ✅ (feito 2026-10-28)
+- Painel do aldeão (`villager_ui.gd`, à direita, mesmo lugar da estação; abrir um fecha o outro):
+  retrato grande, atividade, fome (barra com padrão + % + "Alimentado / Com fome / Faminto"),
+  prioridades só dele (mesmas células da aba Trabalho, `WorkTab.prio_cell`). Abre quando exatamente
+  um aldeão é selecionado (cartão ou clique no mundo); × ou Esc fecham.
+- Alertas (`alerts.gd`, canto inferior direito, crescem para cima, no máximo 4; o resto vira
+  "+N alertas", que expande): perigo (losango) = aldeão passando fome, fica até ele comer; alerta
+  (triângulo, 10 s) = estoque cheio, estação parada; info (octógono, 6 s) = planos de construção
+  pedem mais material do que há no estoque ("Faltam 13 para os planos"). Cada condição dispara uma
+  vez e só volta depois de resolvida; mesma causa vira um alerta "×N". Clique esquerdo: câmera vai
+  até lá e seleciona (aldeão abre o painel, estação abre a estação; cliques seguidos alternam os
+  alvos); direito: dispensa. Hover pausa o tempo. Tempo real (corre também com o jogo pausado).
+- Painéis da direita afastados da barra de Altura (x até 1496).
+- Teste: `test_hud.gd` (painel segue a seleção; alerta de fome fica e some; alerta de material
+  expira e não volta enquanto falta).
 
 ### 11e — Tooltip, feedback e animações
 - Tooltip em pergaminho: nome + tecla de atalho, descrição, custo com ícone, "faltam N" quando faltar.

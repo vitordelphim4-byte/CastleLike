@@ -30,6 +30,9 @@ func open(at: Vector3i) -> void:
 	if st.is_empty():
 		return
 	base = at
+	var villager := get_tree().get_first_node_in_group("villager_panel")
+	if villager:
+		villager.close()  # same spot on screen
 	for c in box.get_children():
 		box.remove_child(c)
 		c.queue_free()
