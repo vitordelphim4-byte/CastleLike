@@ -71,6 +71,7 @@ func toggle() -> void:
 	visible = not visible
 	if visible:
 		_rebuild()
+		UiFx.slide_in(self, Vector2.UP)
 
 
 func _rebuild() -> void:

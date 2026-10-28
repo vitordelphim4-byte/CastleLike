@@ -2,6 +2,9 @@ extends PanelContainer
 ## Bottom-center hint bar: what the keys do in the current mode, as parchment key caps + a word each.
 ## One row per context (mode, then the view cut / x-ray when on). Clicks pass through to the world.
 
+const KEY_CAPS := {KEY_SPACE: "Espaço", KEY_ESCAPE: "Esc", KEY_SHIFT: "Shift", KEY_PAGEUP: "PgUp",
+	KEY_PAGEDOWN: "PgDn", KEY_HOME: "Home", KEY_EQUAL: "+", KEY_KP_ADD: "+", KEY_MINUS: "−", KEY_KP_SUBTRACT: "−"}
+
 var rows := VBoxContainer.new()
 
 
@@ -18,6 +21,16 @@ func _ready() -> void:
 	add_child(rows)
 	Game.mode_changed.connect(_refresh)
 	_refresh()
+
+
+# Blink the key cap of a shortcut as it's used (only listens, never eats the key).
+func _input(e: InputEvent) -> void:
+	if not (e is InputEventKey and e.pressed and not e.echo):
+		return
+	var cap: String = KEY_CAPS.get(e.keycode, OS.get_keycode_string(e.keycode))
+	for k: Label in rows.find_children("*", "Label", true, false):
+		if k.text == cap and k.has_theme_stylebox_override("normal"):
+			UiFx.blink_key(k)
 
 
 func _refresh() -> void:

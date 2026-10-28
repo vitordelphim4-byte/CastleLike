@@ -26,6 +26,10 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/stretch/scale_mode="integer"
 
+[gui]
+
+timers/tooltip_delay_sec=0.4
+
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0

@@ -5,6 +5,12 @@ extends VBoxContainer
 const SHORT := {"wood": "Cortar", "gather": "Colher", "hunt": "Caçar", "dig": "Escavar", "stock": "Estoque",
 	"farm": "Plantação"}
 const STOCK_FILL := Color("#D9B44A")
+const HOW := {"wood": "Arraste sobre o chão: os lenhadores cortam as árvores da área.",
+	"gather": "Arraste sobre o chão: os coletores colhem as frutas dos arbustos.",
+	"hunt": "Arraste sobre o chão (ou clique num animal): os caçadores caçam e trazem a carne.",
+	"dig": "Arraste sobre o chão: os mineiros escavam até a profundidade escolhida.",
+	"stock": "Arraste sobre o chão: área onde os aldeões guardam os recursos.",
+	"farm": "Arraste sobre o chão: os agricultores plantam e colhem a cultura escolhida."}
 
 var _live: Array[Callable] = []  # refreshers for numbers that change without a rebuild
 
@@ -14,7 +20,11 @@ func _ready() -> void:
 	custom_minimum_size.x = 284  # 320 with the frame
 	add_theme_constant_override("separation", 8)
 	Game.orders_changed.connect(_rebuild)
-	Game.mode_changed.connect(func() -> void: get_parent().visible = not Game.building)  # build menu takes this spot
+	Game.mode_changed.connect(func() -> void:  # the build menu takes this spot
+		var was: bool = get_parent().visible
+		get_parent().visible = not Game.building
+		if get_parent().visible and not was:
+			UiFx.slide_in(get_parent(), Vector2.LEFT))
 	var t := Timer.new()
 	t.wait_time = 1.0
 	t.autostart = true
@@ -33,8 +43,10 @@ func _rebuild() -> void:
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 8)
 	add_child(top)
-	_key_button(top, "Trabalho", "T", func() -> void: get_tree().get_first_node_in_group("work_tab").toggle())
-	_key_button(top, "Construção", "B", func() -> void: Game.set_building(not Game.building))
+	_key_button(top, "Trabalho", "T", "Prioridades de trabalho de cada aldeão.",
+		func() -> void: get_tree().get_first_node_in_group("work_tab").toggle())
+	_key_button(top, "Construção", "B", "Blocos, peças, telhados e estações.",
+		func() -> void: Game.set_building(not Game.building))
 
 	add_child(UiTheme.caption("NOVA ORDEM"))
 	var grid := GridContainer.new()
@@ -43,11 +55,10 @@ func _rebuild() -> void:
 	grid.add_theme_constant_override("v_separation", 8)
 	add_child(grid)
 	for kind: String in Game.ORDER_NAMES:
-		var b := Button.new()
+		var b := TipButton.new().tip(Game.ORDER_NAMES[kind], "", HOW[kind])
 		b.text = SHORT[kind]
 		b.icon = UiIcons.x2(UiIcons.order(kind))
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.tooltip_text = Game.ORDER_NAMES[kind]
 		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size.y = 36
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -199,8 +210,8 @@ func _action(row: Container, glyph: String, tip: String, callback: Callable) -> 
 	row.add_child(b)
 
 
-func _key_button(parent: Container, text: String, key: String, callback: Callable) -> void:
-	var b := Button.new()
+func _key_button(parent: Container, text: String, key: String, desc: String, callback: Callable) -> void:
+	var b := TipButton.new().tip(text, key, desc)
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size.y = 32
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL

@@ -1,7 +1,7 @@
 extends SceneTree
 ## Run: godot --headless --path . -s tests/test_hud.gd
 ## Top bar + hint bar (Fase 11b): one roster card per villager, starving shows the "!" badge,
-## pixel icons for every resource, hint bar changes with the mode, order panel counts (Fase 11c), villager panel and alerts (11d).
+## pixel icons for every resource, hint bar changes with the mode, order panel counts (Fase 11c), villager panel and alerts (11d), tooltip and key blink (11e).
 
 var failed := false
 
@@ -71,8 +71,23 @@ func _initialize() -> void:
 	alerts._tick(0.5)
 	_check(not alerts.active.has("material:wood"), "does not fire again while it holds")
 
+	# 11e: rich tooltip says what's missing
+	var need: int = game.stock["stone"] + 5
+	var tip_b = load("res://scripts/tip_button.gd").new().tip("Muro", "X", "teste", {"stone": need})
+	root.add_child(tip_b)
+	var tip: Control = tip_b._make_custom_tooltip("")
+	_check(_text(tip).contains("faltam 5"), "tooltip shortfall: %s" % _text(tip))
+	tip.free()
+	tip_b.queue_free()
+
 	var hud = main.get_node("HUD")
 	_check(_text(hud).contains("Trabalho"), "default hints: %s" % _text(hud))
+	var press := InputEventKey.new()
+	press.keycode = KEY_T
+	press.pressed = true
+	hud._input(press)
+	var cap: Label = hud.rows.find_children("*", "Label", true, false).filter(func(l: Label) -> bool: return l.text == "T")[0]
+	_check(cap.get_theme_stylebox("normal").content_margin_top == 2, "key cap blinks on its shortcut")
 	game.set_building(true)
 	_check(_text(hud).contains("CONSTRUIR"), "build hints: %s" % _text(hud))
 	game.set_building(false)

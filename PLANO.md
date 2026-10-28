@@ -456,11 +456,20 @@ Layout: nada fixo no centro da tela (x 340–1086, y 96–840); só modais abert
 - Teste: `test_hud.gd` (painel segue a seleção; alerta de fome fica e some; alerta de material
   expira e não volta enquanto falta).
 
-### 11e — Tooltip, feedback e animações
-- Tooltip em pergaminho: nome + tecla de atalho, descrição, custo com ícone, "faltam N" quando faltar.
-- Erro (sem material, ação inválida): botão treme ±2 px e ganha borda vermelha por 300 ms.
-- Tecla na barra de atalhos pisca quando o atalho é usado.
-- Painéis entram deslizando 16 px (120 ms), alertas entram da direita; tudo em passos de pixel inteiro.
+### 11e — Tooltip, feedback e animações ✅ (feito 2026-10-28)
+- Tooltip em pergaminho (`TipButton`): nome + tecla do atalho, descrição, custo com ícone e "você tem
+  N"; quando o estoque não paga, losango vermelho + "faltam N" em tinta (não texto vermelho). Usado
+  nas peças, ferramentas de construção, novas ordens, Trabalho/Construção, velocidade e todos os
+  botões-ícone. Aparece em 400 ms.
+- Erro: escolher uma peça que o estoque não paga faz o botão tremer ±2 px (150 ms) com borda vermelha
+  (300 ms); a peça continua escolhida, porque planejar sem material é permitido (o alerta de
+  material avisa).
+- Tecla na barra de atalhos afunda por 100 ms quando o atalho é usado.
+- Painéis entram deslizando 16 px em 120 ms, em pixels inteiros: ordens e construção pela esquerda,
+  estação e aldeão pela direita, aba Trabalho de cima.
+- **Pendente (pequeno):** saída animada dos painéis (hoje somem na hora); alertas entrarem deslizando
+  (estão dentro de um container, que reposiciona os filhos); "modo quente" do tooltip.
+- Teste: `test_hud.gd` (tooltip com "faltam N"; tecla afunda com o atalho).
 
 ### 11f — Menus (depois)
 - Tela de Opções (menu principal e pausa): ainda não existe no jogo. Logo do jogo no menu principal.

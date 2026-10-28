@@ -39,9 +39,11 @@ func _ready() -> void:
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 8)
 	box.add_child(tools)
-	tool_buttons.build = _tool(tools, "build", "Construir", "", _set_tool.bind("build"))
-	tool_buttons.demolish = _tool(tools, "demolish", "Demolir", "X", _set_tool.bind("demolish"))
-	_tool(tools, "rotate", "Girar", "R", func() -> void:
+	tool_buttons.build = _tool(tools, "build", "Construir", "", "Planeja a peça escolhida arrastando no chão.",
+		_set_tool.bind("build"))
+	tool_buttons.demolish = _tool(tools, "demolish", "Demolir", "X",
+		"Marca construções para desmontar. O material volta para o estoque.", _set_tool.bind("demolish"))
+	_tool(tools, "rotate", "Girar", "R", "Gira a peça (ou a cumeeira do telhado) antes de planejar.", func() -> void:
 		Game.build_rot = (Game.build_rot + 1) % Game.ROT_DIRS.size()
 		Game.mode_changed.emit())
 	var spacer := Control.new()
@@ -101,7 +103,7 @@ func _ready() -> void:
 			b.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR  # 3D render scaled down
 			b.custom_minimum_size = Vector2(70, 70)
 			b.toggle_mode = true
-			b.tooltip_text = "%s\nCusto: %d %s" % [info.name, info.cost, Game.RESOURCES[info.mat].name]
+			b.tip(info.name, "", "Arraste no mundo para planejar.", {info.mat: info.cost})
 			buttons[item] = b
 
 	var note := PanelContainer.new()
@@ -157,6 +159,7 @@ func _refresh() -> void:
 	visible = Game.building
 	if visible and not was_visible:  # opening: show the current piece's group
 		_show_tab(Pieces.ITEMS[Game.build_item].group)
+		UiFx.slide_in(self, Vector2.LEFT)
 	for item in buttons:
 		buttons[item].set_pressed_no_signal(item == Game.build_item and Game.build_tool == "build")
 	for t in tool_buttons:
@@ -184,6 +187,9 @@ func _refresh() -> void:
 
 
 func _pick(item: String) -> void:
+	var info: Dictionary = Pieces.ITEMS[item]
+	if not Game.infinite and Game.stock[info.mat] < info.cost:
+		UiFx.shake(buttons[item])  # still picked: plans can wait for material
 	Game.build_item = item
 	Game.build_tool = "build"
 	if not Pieces.stacks(item):
@@ -208,8 +214,8 @@ func _height(step: int) -> void:
 
 
 # 44x44 tool button with its pixel icon and the shortcut key in the corner.
-func _tool(parent: Node, glyph: String, tip: String, key: String, callback: Callable) -> Button:
-	var b := UiTheme.icon_button(UiIcons.glyph(glyph), tip + (" (%s)" % key if key else ""), 44)
+func _tool(parent: Node, glyph: String, tip: String, key: String, desc: String, callback: Callable) -> Button:
+	var b := UiTheme.icon_button(UiIcons.glyph(glyph), tip, 44).tip(tip, key, desc)
 	b.toggle_mode = glyph != "rotate"
 	b.pressed.connect(callback)
 	parent.add_child(b)
@@ -222,8 +228,8 @@ func _tool(parent: Node, glyph: String, tip: String, key: String, callback: Call
 	return b
 
 
-func _button(parent: Node, text: String, callback: Callable) -> Button:
-	var b := Button.new()
+func _button(parent: Node, text: String, callback: Callable) -> TipButton:
+	var b := TipButton.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
 	b.pressed.connect(callback)

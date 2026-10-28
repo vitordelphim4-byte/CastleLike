@@ -143,6 +143,8 @@ func open(w: Worker) -> void:
 		grid.add_child(b)
 		cells[work] = b
 	_level = -1
+	if not visible:
+		UiFx.slide_in(self, Vector2.RIGHT)
 	visible = true
 	_refresh()
 

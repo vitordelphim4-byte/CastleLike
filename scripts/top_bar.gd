@@ -89,9 +89,8 @@ func _add_clock(row: HBoxContainer) -> void:
 	speeds.add_theme_constant_override("separation", 6)
 	row.add_child(speeds)
 	for s: int in Game.SPEEDS:
-		var b := Button.new()
+		var b := TipButton.new().tip("Pausar" if s == 0 else "Velocidade %d×" % s, "Espaço" if s == 0 else str(s))
 		b.text = "II" if s == 0 else "%d×" % s
-		b.tooltip_text = "Pausar (Espaço)" if s == 0 else "Velocidade %dx (tecla %d)" % [s, s]
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.custom_minimum_size = Vector2(34, 24)
@@ -259,4 +258,3 @@ func _pile_icon(kind: String) -> Texture2D:
 		m.mesh = pile
 		m.position = Vector3(-0.5, 0, -0.5)
 		return m, Vector3(0, 0.3, 0), 1.25)
-

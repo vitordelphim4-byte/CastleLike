@@ -139,6 +139,16 @@ static func keycap() -> StyleBoxTexture:
 	return sb
 
 
+## Key cap while its key is pressed: sunk 2 px, darker.
+static func keycap_pressed() -> StyleBoxTexture:
+	var sb := _bevel(PARCH_DARK, Color("#9C7F52"), PARCH_DARK)
+	sb.content_margin_left = 5
+	sb.content_margin_right = 5
+	sb.content_margin_top = 2
+	sb.content_margin_bottom = 0
+	return sb
+
+
 ## Villager card / tile: "normal", "hover" or "selected" (gold ring).
 static func card(state: String) -> StyleBoxTexture:
 	var sb := _bevel(Color("#3A2618") if state == "hover" else PANEL_BG, WOOD_BASE, INK, true, false,
@@ -262,12 +272,12 @@ static func _grabber(vertical: bool, c: Color) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
-## Square button showing a pixel icon at exactly 2x (margins sized to fit), with a tooltip.
-static func icon_button(icon: Texture2D, tip: String, side := 22) -> Button:
-	var b := Button.new()
+## Square button showing a pixel icon at exactly 2x (margins sized to fit), with a parchment tooltip
+## (add a key / description / cost with .tip()).
+static func icon_button(icon: Texture2D, tip: String, side := 22) -> TipButton:
+	var b := TipButton.new().tip(tip)
 	b.icon = icon
 	b.expand_icon = true
-	b.tooltip_text = tip
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(side, side)
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER

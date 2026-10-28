@@ -69,6 +69,8 @@ func open(at: Vector3i) -> void:
 	box.add_child(UiTheme.caption("RECEITAS"))
 	for id: String in st.bills:
 		_recipe(id, st.bills[id])
+	if not visible:
+		UiFx.slide_in(self, Vector2.RIGHT)
 	visible = true
 	_refresh_status()
 
