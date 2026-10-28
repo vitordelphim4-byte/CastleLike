@@ -349,14 +349,31 @@ ou de animais andando aleatoriamente.
 - Teste: `test_light.gd` (chão aberto 15, sala fechada 0, poço cavado: 15 → 14 … → 9 pela sala,
   luz mínima só com o corte).
 
-### 10g — Desempenho
-- Ruído 3D em lote (`Noise.get_image_3d` em C++) em vez de bloco a bloco no GDScript.
-- Pular blocos onde caverna é impossível (perto do leito, acima da superfície).
-- Gerar colunas numa thread (WorkerThreadPool) para não travar ao explorar.
-- Navegação dentro de cavernas só quando alguém vai até lá, ou quando o jogador cava até ela.
-- Metas (bench_worldgen): geração ≤ 5 ms por coluna. Explorar ≤ 45 ms por coluna (hoje 36).
-  Memória ≤ 1,5× a atual.
-- Pode ir sendo feita junto com 10b e 10c, se os números estourarem.
+### 10g — Desempenho ✅ (feito 2026-10-27)
+Foco: explorar sem engasgo. O trabalho pesado saiu da thread principal.
+- **Geração numa thread** própria (com o seu `WorldGen`: a geração é função pura). Ela gera as
+  colunas que o stream vai pedir (até 12 na fila, as mais próximas primeiro), já com as contagens
+  por seção, as alturas (`_column_stats`) e a correnteza dos rios (`flow`, que custava até 15 ms
+  na malha da água). O stream espera a coluna ficar pronta em vez de gerar na hora. Os modelos de
+  árvore também saem nessa thread.
+- **Malhas do terreno no WorkerThreadPool** (até 4 seções ao mesmo tempo). A thread recebe uma
+  cópia da seção com 1 bloco de borda, alturas e luz (`_snapshot`), e devolve os arrays prontos
+  (`_terrain`, função pura). A thread principal só cria o ArrayMesh, a água e a grama. Cavar e
+  construir continuam refazendo na hora, pela mesma função; um job de uma seção editada no meio
+  do caminho é descartado. Arrays montados direto (`MeshBuf`, ~3x mais rápido que SurfaceTool).
+- A luz da coluna e dos 4 vizinhos é calculada antes, um vizinho por passo (`_sky_ready`).
+- Navegação montada em fatias de 4 camadas por passo; árvores aparecem algumas por quadro;
+  colunas distantes são descarregadas com no máximo 1 ms por quadro (antes: até 80 ms de uma vez).
+- Medido (`bench_explore`, câmera a 30 blocos/s): trabalho do mundo por quadro, média 8,6 → 6,9 ms,
+  pior quadro 62 → ~25 ms. `bench_worldgen`: explorar 113 → 34 ms por coluna (meta ≤ 45 ✅).
+- Fora da meta: geração 9 ms por coluna (meta 5). Como roda fora da thread principal, não trava.
+  Pulado (ponytail): navegação de cavernas só sob demanda; as fatias já tiram o engasgo.
+- Picos que sobram (raros, ≤ ~25 ms): malha da água de uma seção (ainda na thread principal) e a
+  luz de uma coluna com ravina grande.
+- Teste: `test_threads.gd` (coluna da thread = coluna gerada na hora; malha da thread = malha
+  feita na hora). Bench: `bench_explore.gd`.
+- Falham também no commit da 10f, então não vêm daqui (investigar): `test_roof` (telhados não
+  terminam), `test_view_cut` (túnel não termina de ser cavado), `test_pieces` (demolição).
 
 ### 10h — Biomas de caverna (futuro)
 - Caverna exuberante (musgo, plantas: comida no subsolo), estalactites, "deep dark".

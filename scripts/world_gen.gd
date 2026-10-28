@@ -364,7 +364,15 @@ func generate(cx: int, cz: int, size: int, sy: int) -> Dictionary:
 	if not flat:
 		_cave_fall(cx, cz, size, tops, blocks, springs)
 	_plant(cx, cz, size, tops, blocks, trees)  # skips spots carved open (no soil left on top)
-	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth, "springs": springs}
+	# River current per spot (lx + size * lz), here on the generating thread: the first call for a
+	# spot costs 4 river levels, up to ~15 ms for a river section's water mesh on the main thread.
+	var flow := PackedVector2Array()
+	flow.resize(size * size)
+	for lz in size:
+		for lx in size:
+			flow[lx + size * lz] = river_flow(cx * size + lx, cz * size + lz)
+	return {"blocks": blocks, "trees": trees, "opened": open_depth > 0, "open_depth": open_depth, "springs": springs,
+		"flow": flow}
 
 
 # River water must sit in its bed: river sources above the sea with air beside or under them are
