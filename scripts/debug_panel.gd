@@ -37,6 +37,25 @@ func _ready() -> void:
 		["+ Coelho", _spawn.bind("rabbit")], ["+ Cervo", _spawn.bind("deer")], ["+ Javali", _spawn.bind("boar")],
 		["Matar o mais próximo", _kill_nearest],
 	])
+	Mob.show_ai = true
+	_row(box, "Mobs", [
+		["+ Zumbi", _spawn_mob.bind("zombie")], ["+ Esqueleto", _spawn_mob.bind("skeleton")],
+		["+ Esq. arqueiro", _spawn_mob.bind("skeleton_archer")], ["+ Lobo", _spawn_mob.bind("wolf")],
+	])
+	_row(box, "", [
+		["Matar mobs", func() -> void:
+			for m: Mob in get_tree().get_nodes_in_group("mobs"):
+				m.hurt(999, null)],
+		["Passivos liga/desliga", func() -> void: Game.mobs_passive = not Game.mobs_passive],
+		["Rótulos IA", func() -> void: Mob.show_ai = not Mob.show_ai],
+	])
+	_row(box, "Combate", [
+		["Morte: ferido/permanente", func() -> void: Game.permadeath = not Game.permadeath],
+		["Curar todos", func() -> void:
+			for w: Worker in get_node("../Workers").get_children():
+				w.heal()],
+		["2 soldados + 1 arqueiro", _guards.bind(true)], ["Sem guardas", _guards.bind(false)],
+	])
 	_row(box, "Visão", [
 		["Ir ao morro", _go_hill], ["Aldeão na câmara", _villager_in],
 		["Corte: túnel", _cut.bind(2)], ["Corte: caverna", _cut.bind(6)], ["Sem corte", _cut.bind(-1)],
@@ -101,10 +120,14 @@ func _row(box: VBoxContainer, label: String, buttons: Array) -> void:
 
 
 func _refresh() -> void:
-	status.text = "%s · velocidade %dx · fome %s · infinito %s · animais %d (+%d carcaças) · água ativa %d%s" % [
+	var downed := get_tree().get_nodes_in_group("workers").filter(func(w: Worker) -> bool: return w.state == Worker.DOWNED)
+	status.text = "%s · velocidade %dx · fome %s · infinito %s · animais %d (+%d carcaças) · água ativa %d%s
+mobs %d%s · caídos %d · mortos %d · morte %s" % [
 		Game.clock_text(), Game.speed, "ligada" if Game.hunger else "desligada", "sim" if Game.infinite else "não",
 		get_tree().get_nodes_in_group("animals").size(), get_tree().get_nodes_in_group("corpses").size(),
-		Game.world.fluids.active.size(), " (x10)" if Game.world.fluids.speed > 1.0 else ""]
+		Game.world.fluids.active.size(), " (x10)" if Game.world.fluids.speed > 1.0 else "",
+		get_tree().get_nodes_in_group("mobs").size(), " (passivos)" if Game.mobs_passive else "", downed.size(),
+		get_tree().get_nodes_in_group("dead").size(), "permanente" if Game.permadeath else "só ferido"]
 
 
 func _skip(hours: float) -> void:
@@ -166,6 +189,26 @@ func _spawn(species: String) -> void:
 	var p := rig.position + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3))
 	p.y = Game.world.top_at(floori(p.x), floori(p.z))
 	Animal.spawn(get_node("../Animals"), Game.world, species, Vector3(floorf(p.x) + 0.5, p.y, floorf(p.z) + 0.5))
+
+
+# One monster on open ground 12 blocks from the camera, so it walks in to the villagers.
+func _spawn_mob(kind: String) -> void:
+	var rig: Node3D = get_node("../CameraRig")
+	for i in 20:
+		var a := randf() * TAU
+		var c := Vector3i((rig.position + Vector3(cos(a), 0, sin(a)) * 12.0).floor())
+		c.y = Game.world.top_at(c.x, c.z)
+		if Game.world.walkable(c):
+			Mob.spawn(get_node("../Mobs"), Game.world, kind, Vector3(c) + Vector3(0.5, 0, 0.5))
+			return
+
+
+# First two villagers soldiers (priority 1), the third an archer; or nobody fights.
+func _guards(on: bool) -> void:
+	var workers := get_tree().get_nodes_in_group("workers")
+	for i in workers.size():
+		workers[i].priorities["soldier"] = 1 if on and i < 2 else 0
+		workers[i].priorities["archer"] = 1 if on and i == 2 else 0
 
 
 func _kill_nearest() -> void:

@@ -140,7 +140,7 @@ static func capture(main: Node) -> Dictionary:
 	for wk: Worker in main.get_tree().get_nodes_in_group("workers"):
 		workers.append({"name": wk.worker_name, "color": wk.color, "look": wk.look, "priorities": wk.priorities,
 			"position": wk.position, "carrying": wk.carrying, "carry_count": wk.carry_count,
-			"food": wk.food, "rest": wk.rest, "returns": _in_hand(wk)})
+			"food": wk.food, "rest": wk.rest, "hp": maxi(wk.hp, Worker.UP_HP), "returns": _in_hand(wk)})
 	var animals := []
 	for a in main.get_tree().get_nodes_in_group("animals") + main.get_tree().get_nodes_in_group("corpses"):
 		animals.append([a.species, a.position, a.hp, a.state == Animal.DEAD, a.marked])

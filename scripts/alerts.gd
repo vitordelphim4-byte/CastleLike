@@ -71,6 +71,21 @@ func _conditions() -> Dictionary:
 		out.starving = {"level": "danger", "count": starving.size(), "targets": starving,
 			"title": "%s passando fome" % starving[0].worker_name if starving.size() == 1 else "%d aldeões passando fome" % starving.size(),
 			"sub": "Fome 0% · clique para ir até lá" if starving.size() == 1 else names}
+	var hunted := {}  # villagers some monster is after
+	for m: Mob in get_tree().get_nodes_in_group("mobs"):
+		if m.target is Worker:
+			hunted[m.target] = true
+	if hunted:
+		out.attack = {"level": "danger", "count": hunted.size(), "targets": hunted.keys(),
+			"title": "Monstros atacando!", "sub": "Alvo: %s" % ", ".join(hunted.keys().map(func(w: Worker) -> String: return w.worker_name))}
+	var downed := get_tree().get_nodes_in_group("workers").filter(func(w: Worker) -> bool: return w.state == Worker.DOWNED)
+	if downed:
+		out.downed = {"level": "danger", "count": downed.size(), "targets": downed,
+			"title": "%s caído" % downed[0].worker_name if downed.size() == 1 else "%d aldeões caídos" % downed.size(),
+			"sub": "Ferido · levanta sozinho"}
+	for w: Worker in get_tree().get_nodes_in_group("dead"):
+		out["dead:" + w.worker_name] = {"level": "warn", "count": 1, "targets": [w],
+			"title": "%s morreu" % w.worker_name, "sub": "Morto por monstros"}
 	var full := Game.zones.filter(func(z: Dictionary) -> bool: return Game.zone_used(z) >= z.tiles.size() and z.tiles.size() > 0)
 	if full:
 		out.stock_full = {"level": "warn", "count": full.size(), "targets": full,

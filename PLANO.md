@@ -506,6 +506,25 @@ de blocos continua para muros/torres. Referências: casa pequena, forja, moinho,
 
 ---
 
+## Fase 13 — Monstros, vida dos aldeões e guardas (só no debug por enquanto)
+Mobs nascem só pelo painel F1 (um por clique, a 12 blocos da câmera). Spawn natural à noite vem depois.
+
+### 13a — Vida dos aldeões + zumbi ✅ (feito 2026-11-02)
+- Aldeão tem 10 de vida (`Worker.hurt`). Em 0: **caído** 30 s (monstros ignoram), levanta com 2 e vai
+  dormir; ou **morre** se `Game.permadeath` (sai do grupo "workers", fica deitado, grupo "dead").
+  Recupera +1 a cada 30 s ocioso ou dormindo. Desarmado atingido foge do monstro. Vida no save e barra
+  VIDA no painel do aldeão. Alertas: "Monstros atacando!", "X caído", "X morreu".
+- `mob.gd` (grupo "mobs"): pensa a cada 0,5 s; alvo = aldeão de pé e fora de casa; quem bate vira o
+  alvo (provocação). Rótulo 3D no debug: tipo · estado · vida · alvo.
+- Zumbi: lento (2), 6 de vida, nunca desiste; chama zumbis a 10 blocos (horda); agarrão deixa a vítima
+  com metade da velocidade por 2 s.
+- `Worker.shoot(atirador, alvo, dano)`: flecha compartilhada (caçador, depois arqueiros e esqueletos).
+- Debug: linhas "Mobs" (+ Zumbi / Esqueleto / Esq. arqueiro / Lobo, matar, passivos, rótulos) e
+  "Combate" (morte ferido/permanente, curar todos, 2 soldados + 1 arqueiro, sem guardas).
+- Teste: `test_mobs.gd`.
+
+---
+
 ## Ordem e dependências
 1 Dia/noite → 2 Save → 3 Tabela de recursos/estoque → 4 Minérios/comida → 5 Animações → 6 Agricultura → 7 Animais/caça.
 8 e 9 independentes: entram quando as perguntas forem respondidas.

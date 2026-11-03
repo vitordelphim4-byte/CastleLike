@@ -17,6 +17,9 @@ var hunger_word := UiTheme.caption("")
 var sleep := ProgressBar.new()
 var sleep_pct := UiTheme.num(20)
 var _sleep_level := -1
+var health := ProgressBar.new()
+var health_num := UiTheme.num(20)
+var _health_level := -1
 var cells := {}  # work -> Button
 var _level := -1
 
@@ -54,6 +57,15 @@ func _ready() -> void:
 	x.pressed.connect(close)
 	head.add_child(x)
 	info.add_child(_field("AGORA", activity))
+	var hp_row := HBoxContainer.new()
+	hp_row.add_theme_constant_override("separation", 8)
+	health.custom_minimum_size = Vector2(160, 12)
+	health.max_value = Worker.MAX_HP
+	health.show_percentage = false
+	health.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hp_row.add_child(health)
+	hp_row.add_child(health_num)
+	info.add_child(_field("VIDA", hp_row))
 	var bar_row := HBoxContainer.new()
 	bar_row.add_theme_constant_override("separation", 8)
 	hunger.custom_minimum_size = Vector2(160, 12)
@@ -156,6 +168,7 @@ func open(w: Worker) -> void:
 		cells[work] = b
 	_level = -1
 	_sleep_level = -1
+	_health_level = -1
 	if not visible:
 		UiFx.slide_in(self, Vector2.RIGHT)
 	visible = true
@@ -173,6 +186,12 @@ func _refresh() -> void:
 		close()
 		return
 	activity.text = worker.activity()
+	health.value = maxi(worker.hp, 0)
+	health_num.text = "%d/%d" % [maxi(worker.hp, 0), Worker.MAX_HP]
+	var hurt := 0 if worker.hp > Worker.MAX_HP / 2 else (1 if worker.hp > Worker.UP_HP else 2)
+	if hurt != _health_level:
+		_health_level = hurt
+		health.add_theme_stylebox_override("fill", UiTheme.bar_fill(hurt))
 	hunger.value = worker.food
 	hunger_pct.text = "%d%%" % roundi(worker.food * 100)
 	var level := 0 if worker.food >= Worker.HUNGRY else (1 if worker.food > 0 else 2)

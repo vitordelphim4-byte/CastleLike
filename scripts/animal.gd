@@ -19,6 +19,10 @@ const SPECIES := {
 		"biomes": ["forest"],
 		"body": Vector3i(8, 7, 12), "leg": Vector3i(2, 4, 2), "head": Vector3i(6, 5, 5),
 		"fur": Color(0.33, 0.24, 0.18), "belly": Color(0.28, 0.2, 0.15)},
+	# Mesh only: wolves are monsters (Mob), never spawned as wildlife (no biomes).
+	"wolf": {"name": "Lobo", "speed": 6.0, "hp": 3, "meat": 0, "flee": 0.0, "herd": [1, 1], "biomes": [],
+		"body": Vector3i(6, 6, 12), "leg": Vector3i(2, 6, 2), "head": Vector3i(5, 5, 5),
+		"fur": Color(0.46, 0.46, 0.48), "belly": Color(0.72, 0.7, 0.66)},
 }
 const VS := 1.0 / 16.0
 const MAX_ALIVE := 14
@@ -245,6 +249,9 @@ static func _build(sp_id: String, part: String) -> ArrayMesh:
 				"deer": VoxelMesh.fill(v, Vector3i(b.x / 2 - 1, b.y - 3, b.z), Vector3i(2, 2, 1), Color(0.95, 0.93, 0.88))
 				"boar":  # bristly ridge along the back
 					VoxelMesh.fill(v, Vector3i(b.x / 2 - 1, b.y, 1), Vector3i(2, 1, b.z - 3), fur.darkened(0.35))
+				"wolf":  # dark saddle, bushy tail hanging down
+					VoxelMesh.fill(v, Vector3i(1, b.y - 1, 2), Vector3i(b.x - 2, 1, b.z - 4), fur.darkened(0.3))
+					VoxelMesh.fill(v, Vector3i(b.x / 2 - 1, b.y - 5, b.z), Vector3i(2, 5, 2), fur.darkened(0.15))
 			return VoxelMesh.build(v, VS, Vector3(-b.x / 2.0, 0, -b.z / 2.0), 0.06)
 		"head":
 			var h: Vector3i = sp.head
@@ -273,6 +280,13 @@ static func _build(sp_id: String, part: String) -> ArrayMesh:
 					for x in [0, h.x - 1]:
 						VoxelMesh.fill(v, Vector3i(x, 0, -2), Vector3i(1, 2, 1), Color(0.95, 0.92, 0.82))  # tusks
 						v[Vector3i(x, h.y, h.z - 2)] = fur.darkened(0.2)  # ears
+				"wolf":
+					VoxelMesh.fill(v, Vector3i(1, 0, -3), Vector3i(h.x - 2, 2, 3), fur.lightened(0.1))  # long snout
+					v[Vector3i(h.x / 2, 1, -3)] = eye  # nose
+					v[Vector3i(0, h.y - 2, 1)] = Color(0.95, 0.8, 0.2)  # yellow eyes
+					v[Vector3i(h.x - 1, h.y - 2, 1)] = Color(0.95, 0.8, 0.2)
+					for x in [0, h.x - 1]:
+						VoxelMesh.fill(v, Vector3i(x, h.y, h.z - 2), Vector3i(1, 2, 1), fur.darkened(0.2))  # pointed ears
 			# The head's back face sits at the neck; it reaches forward (-Z) and a bit below the back line.
 			return VoxelMesh.build(v, VS, Vector3(-h.x / 2.0, -h.y / 3.0, -h.z), 0.06)
 		_:  # leg

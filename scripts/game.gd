@@ -40,6 +40,8 @@ const ROT_DIRS: Array[Vector3i] = [Vector3i.FORWARD, Vector3i.RIGHT, Vector3i.BA
 var stock := _empty_stock()  # totals over all stockpile tiles (kept by _stock_changed)
 var infinite := false  # debug map: building never runs out
 var hunger := true  # villagers get hungry (the debug panel can switch it off)
+var permadeath := false  # villagers at 0 hp die instead of being knocked out (debug panel toggle)
+var mobs_passive := false  # debug: monsters only wander (watch their paths without fights)
 var stockpile := Vector3.ZERO  # colony home: where the first stockpile and the villagers start
 # Stockpile zones: {id, area: Rect2i, tiles: {feet cell: {kind, n}}}. One kind per tile.
 var zones: Array[Dictionary] = []

@@ -14,8 +14,16 @@ extends Node3D
 ## TIRED) the villager goes to a house with a free bed, walks in through the door and stays inside
 ## until rested and it's day. No free bed: dozes where it stands, recovering at half the speed.
 ## At 0 it walks and works at half speed.
+## Health (Phase 13): monsters hurt villagers; at 0 hp they're knocked out (DOWNED) for a while and
+## get up weak, or die for good when Game.permadeath is on. hp comes back slowly while resting.
 
-enum { IDLE, MANUAL, TO_STOCK, TO_WORK, WORKING, FETCH, GATHER, TO_EAT, EATING, TO_BED, SLEEPING }
+enum { IDLE, MANUAL, TO_STOCK, TO_WORK, WORKING, FETCH, GATHER, TO_EAT, EATING, TO_BED, SLEEPING, DOWNED, DEAD }
+
+const MAX_HP := 10
+const DOWNED_TIME := 30.0
+const UP_HP := 2  # hp after getting up
+const REGEN_TIME := 30.0  # +1 hp this often while idle or asleep
+const SLOWED := 0.5  # walking speed while a zombie's grab lasts
 
 const HUNGRY := 0.3
 const TIRED := 0.25  # sleeps even in the day
@@ -62,7 +70,11 @@ var prey: Node3D  # hunt: the animal we're after; butcher: the corpse
 var forced := false  # player-ordered job (right click): ignores orders/priorities, then back to normal
 var pending := {}  # {kind, target}: an order given while carrying; done after the cargo is put away
 var returns := {}  # kind -> amount still in hand from an interrupted craft, walked back one kind at a time
-var scared := 0.0  # seconds left running from a boar
+var scared := 0.0  # seconds left running from a boar / monster
+var fear := ""  # what we're running from
+var hp := MAX_HP
+var slowed := 0.0  # seconds left of a zombie's grab
+var _regen := 0.0
 var bow: MeshInstance3D
 var tree: ResourceNode
 var job_cell := Vector3i.ZERO
@@ -176,8 +188,12 @@ func _activity() -> String:
 	if food <= 0 and state == IDLE:
 		return "Faminto — sem comida!"
 	if scared > 0:
-		return "Fugindo do javali!"
+		return "Fugindo do %s!" % fear
 	match state:
+		DOWNED:
+			return "Caído, ferido"
+		DEAD:
+			return "Morto"
 		TO_EAT:
 			return "Indo comer"
 		TO_BED:
@@ -224,8 +240,21 @@ func _activity() -> String:
 
 
 func _process(delta: float) -> void:
+	if state == DEAD:
+		return
+	if state == DOWNED:
+		timer -= delta
+		if timer <= 0:
+			_get_up()
+		return
 	anim_t += delta
 	scared = maxf(0.0, scared - delta)
+	slowed = maxf(0.0, slowed - delta)
+	if hp < MAX_HP and state in [IDLE, SLEEPING]:
+		_regen += delta
+		if _regen >= REGEN_TIME:
+			_regen = 0.0
+			hp += 1
 	# Hunting: stop walking as soon as the prey is in bow range.
 	if job_kind == "hunt" and state == TO_WORK and not path.is_empty() and _job_valid() and _in_reach():
 		path.clear()
@@ -380,7 +409,7 @@ func _update_state(delta: float) -> void:
 func _finish_job() -> void:
 	match job_kind:
 		"hunt":
-			_shoot()
+			Worker.shoot(self, prey)
 			state = TO_WORK  # keep after it until it's down
 			return
 		"butcher":
@@ -611,6 +640,7 @@ func _end_hunt() -> void:
 # A boar hit us: drop the job and run away from it for a moment.
 func scare(from: Node3D) -> void:
 	_drop_job()
+	fear = from.display_name().to_lower()
 	var away := position - from.position
 	away.y = 0
 	away = away.normalized() if away.length() > 0.1 else Vector3.RIGHT
@@ -621,10 +651,70 @@ func scare(from: Node3D) -> void:
 	scared = 2.5
 
 
-# Loose an arrow at the prey; it hits (or lands near) when it arrives.
-func _shoot() -> void:
-	var target := prey
-	var from := global_position + Vector3(0, 1.0, 0)
+func display_name() -> String:
+	return worker_name
+
+
+# Monsters only go for villagers that are up and outside (not inside a house asleep).
+func targetable() -> bool:
+	return state not in [DOWNED, DEAD] and visible
+
+
+# Hit by a monster (attacker null: debug panel). Unarmed villagers run from it.
+func hurt(dmg: int, attacker: Node3D) -> void:
+	if state in [DOWNED, DEAD]:
+		return
+	hp -= dmg
+	_regen = 0.0
+	if hp > 0:
+		if attacker and armed() == "":
+			scare(attacker)
+		return
+	_drop_job()
+	pending = {}
+	state = DEAD if Game.permadeath else DOWNED
+	timer = DOWNED_TIME
+	if state == DEAD:
+		remove_from_group("workers")
+		add_to_group("dead")
+		selected = false
+	var tw := create_tween()
+	tw.tween_property(self, "rotation", Vector3(0, rotation.y, PI / 2), 0.4).set_trans(Tween.TRANS_QUAD)
+
+
+# Knocked out long enough: up again, weak, and off to bed.
+func _get_up() -> void:
+	hp = UP_HP
+	rotation = Vector3(0, rotation.y, 0)
+	state = IDLE
+	_go_sleep()
+
+
+# Debug panel: full hp, back on their feet (even the dead).
+func heal() -> void:
+	if state == DEAD:
+		remove_from_group("dead")
+		add_to_group("workers")
+	if state in [DOWNED, DEAD]:
+		rotation = Vector3(0, rotation.y, 0)
+		state = IDLE
+	hp = MAX_HP
+
+
+# "soldier" / "archer" if this villager fights (the combat work with the better priority), else "".
+func armed() -> String:
+	var s: int = priorities.get("soldier", 0)
+	var a: int = priorities.get("archer", 0)
+	if s > 0 and (a == 0 or s <= a):
+		return "soldier"
+	return "archer" if a > 0 else ""
+
+
+# Loose an arrow from shooter (villager or skeleton) at target; it hits (or lands near) when it
+# arrives.
+static func shoot(shooter: Node3D, target: Node3D, dmg := 1) -> void:
+	var world: World = shooter.world
+	var from := shooter.global_position + Vector3(0, 1.0, 0)
 	var to: Vector3 = target.global_position + Vector3(0, 0.35, 0)
 	var hit := randf() < HIT_CHANCE
 	if not hit:
@@ -643,7 +733,7 @@ func _shoot() -> void:
 	tw.tween_property(arrow, "global_position", to, from.distance_to(to) / ARROW_SPEED)
 	tw.tween_callback(func() -> void:
 		if hit and is_instance_valid(target):
-			target.hurt(1, self)
+			target.hurt(dmg, shooter if is_instance_valid(shooter) else null)
 		arrow.queue_free())
 
 
@@ -1181,7 +1271,7 @@ func _part(part: String, pos: Vector3, parent: Node3D = self) -> MeshInstance3D:
 
 func _walk(delta: float) -> void:
 	var to := path[0] - position
-	var step := speed * delta * (STARVING_SLOWDOWN if food <= 0 else 1.0)
+	var step := speed * delta * (STARVING_SLOWDOWN if food <= 0 else 1.0) * (SLOWED if slowed > 0 else 1.0)
 	if World.is_water(world.get_block(Vector3i(position.floor()))):
 		step *= WADE_SLOWDOWN
 	if to.length() <= step:

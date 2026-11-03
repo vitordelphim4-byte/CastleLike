@@ -34,6 +34,7 @@ var water_lab := {}  # debug map water lab (_build_water_lab): origin, rect, spo
 @onready var world: World = $World
 @onready var workers: Node3D = $Workers
 var animals := Node3D.new()
+var mobs := Node3D.new()
 var perf := Label.new()  # F3: FPS / frame time / draw calls overlay for performance testing
 
 
@@ -58,6 +59,8 @@ func _ready() -> void:
 	add_child(Farming.new())
 	animals.name = "Animals"
 	add_child(animals)
+	mobs.name = "Mobs"
+	add_child(mobs)
 	var herds := Timer.new()  # wildlife wanders in now and then
 	herds.wait_time = 8.0
 	herds.autostart = true
@@ -76,6 +79,7 @@ func _ready() -> void:
 			w.position = info.position
 			w.food = info.get("food", 1.0)
 			w.rest = info.get("rest", 1.0)
+			w.hp = info.get("hp", Worker.MAX_HP)
 			w.returns = info.get("returns", {})
 			world.load_area(info.position, 1, false)  # nav under them before they look for paths
 			workers.add_child(w)
