@@ -78,6 +78,40 @@ func _initialize() -> void:
 	_check(zombie.state == mob_script.DEAD, "guards killed the zombie (hp %d)" % zombie.hp)
 	_check(fought and shot, "soldier fought (%s) and archer shot (%s)" % [fought, shot])
 	_check(victim.state != worker_script.DOWNED and victim.hp > 0, "peasant still up: hp %d" % victim.hp)
+
+	# Skeleton warrior: picks the soldier over a closer peasant; the guards bring it down.
+	for wk in workers:
+		wk.heal()
+	_place(victim, w, s + Vector3i(0, 0, -16))
+	_place(soldier, w, s + Vector3i(4, 0, -12))
+	_place(archer, w, s + Vector3i(-3, 0, -8))
+	var skel = mob_script.spawn(main.mobs, w, "skeleton", Vector3(s.x + 0.5, w.top_at(s.x, s.z - 21), s.z - 20.5))
+	var first_target = null
+	for frame in 6000:
+		await process_frame
+		if first_target == null and skel.target:
+			first_target = skel.target
+		if skel.state == mob_script.DEAD:
+			break
+	_check(first_target == soldier, "skeleton went for the guard first (got %s)" % [first_target.worker_name if first_target else "nobody"])
+	_check(skel.state == mob_script.DEAD, "guards killed the skeleton (hp %d)" % skel.hp)
+
+	# Skeleton archer: shoots from range, backs off from the soldier, still dies.
+	for wk in workers:
+		wk.heal()
+	archer.priorities["archer"] = 0  # only the soldier: it has to walk up to it
+	_place(soldier, w, s + Vector3i(0, 0, -10))
+	var bowman = mob_script.spawn(main.mobs, w, "skeleton_archer", Vector3(s.x + 0.5, w.top_at(s.x, s.z - 20), s.z - 19.5))
+	var aimed := false
+	var kited := false
+	for frame in 6000:
+		await process_frame
+		aimed = aimed or bowman.state == mob_script.ATTACK
+		kited = kited or bowman.state == mob_script.KITE
+		if bowman.state == mob_script.DEAD:
+			break
+	_check(aimed and kited, "skeleton archer shot (%s) and backed off (%s)" % [aimed, kited])
+	_check(bowman.state == mob_script.DEAD, "guards killed the skeleton archer (hp %d)" % bowman.hp)
 	if not failed:
 		print("test_mobs OK")
 	quit(1 if failed else 0)

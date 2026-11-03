@@ -536,6 +536,13 @@ Mobs nascem só pelo painel F1 (um por clique, a 12 blocos da câmera). Spawn na
   passa pelo monstro, fogem para longe).
 - Teste: `test_mobs.gd` (soldado + arqueiro matam o zumbi; o camponês continua de pé).
 
+### 13c — Esqueletos ✅ (feito 2026-11-02)
+- Guerreiro: 5 de vida, velocidade 3,5, 2 de dano, espada. Vai **primeiro nos guardas** que vê. Escudo:
+  40% das flechas vindas da frente não pegam (flanquear ajuda).
+- Arqueiro: 3 de vida, atira de até 12 com linha livre (flecha do caçador, 1 de dano a cada 2 s); recua
+  6 blocos quando alguém chega a menos de 5; prefere quem está parado trabalhando.
+- Teste: `test_mobs.gd` (guerreiro escolhe o soldado; arqueiro atira, recua e morre).
+
 ---
 
 ## Ordem e dependências
