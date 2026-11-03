@@ -75,7 +75,8 @@ func _initialize() -> void:
 		shot = shot or (archer.job_kind == "defend" and archer.state == worker_script.WORKING)
 		if zombie.state == mob_script.DEAD:
 			break
-	_check(zombie.state == mob_script.DEAD, "guards killed the zombie (hp %d)" % zombie.hp)
+	_check(zombie.state == mob_script.DEAD, "guards killed the zombie (hp %d; soldier %s %s hp %d, archer %s %s)" % [zombie.hp,
+		soldier.job_kind, soldier.state, soldier.hp, archer.job_kind, archer.state])
 	_check(fought and shot, "soldier fought (%s) and archer shot (%s)" % [fought, shot])
 	_check(victim.state != worker_script.DOWNED and victim.hp > 0, "peasant still up: hp %d" % victim.hp)
 
@@ -112,6 +113,37 @@ func _initialize() -> void:
 			break
 	_check(aimed and kited, "skeleton archer shot (%s) and backed off (%s)" % [aimed, kited])
 	_check(bowman.state == mob_script.DEAD, "guards killed the skeleton archer (hp %d)" % bowman.hp)
+
+	# Wolves: one alone circles without biting; once a second one joins, the pack attacks.
+	for wk in workers:
+		wk.heal()
+		for k in wk.priorities:
+			wk.priorities[k] = 0
+	for t in main.get_children():  # no herds: a wolf would hunt a deer instead
+		if t is Timer:
+			t.stop()
+	for a in get_nodes_in_group("animals"):
+		a.free()
+	_place(victim, w, s + Vector3i(0, 0, -12))
+	var wolf =mob_script.spawn(main.mobs, w, "wolf", Vector3(s.x + 0.5, w.top_at(s.x, s.z - 22), s.z - 21.5))
+	var circled := false
+	for frame in 900:
+		await process_frame
+		circled = circled or wolf.state == mob_script.CIRCLE
+	var bitten := workers.any(func(x) -> bool: return x.hp < x.MAX_HP)
+	_check(circled and not bitten, "lone wolf circles (%s) without biting (%s)" % [circled, bitten])
+	mob_script.spawn(main.mobs, w, "wolf", wolf.position + Vector3(1, 0, 0))
+	var ran := false
+	for frame in 3000:
+		await process_frame
+		ran = ran or wolf.state == mob_script.KITE
+		bitten = workers.any(func(x) -> bool: return x.hp < x.MAX_HP)
+		if bitten and ran:
+			break
+	_check(bitten and ran, "pack of two bites (%s) and steps back (%s)" % [bitten, ran])
+	wolf.hurt(2, victim)
+	await process_frame
+	_check(wolf.fled and wolf.state == mob_script.FLEE, "badly hurt wolf runs away")
 	if not failed:
 		print("test_mobs OK")
 	quit(1 if failed else 0)

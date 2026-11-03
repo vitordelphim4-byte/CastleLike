@@ -777,8 +777,6 @@ func _pick_threat(mobs: Array) -> Mob:
 	var best: Mob = null
 	var best_s := INF
 	for m: Mob in mobs:
-		if unreachable.has(m):
-			continue
 		var near := m.position.distance_to(Game.stockpile)
 		for o: Worker in people:
 			near = minf(near, m.position.distance_to(o.position))
@@ -1168,7 +1166,9 @@ func _near(p: Vector3, r := 1.6) -> bool:
 func _fail() -> void:
 	if job_kind in ["wood", "gather"] and tree:
 		unreachable[tree] = true
-	elif job_kind in ["hunt", "butcher", "defend"] and is_instance_valid(prey):
+	elif job_kind == "defend":
+		pass  # it moves: the next look around tries again
+	elif job_kind in ["hunt", "butcher"] and is_instance_valid(prey):
 		unreachable[prey] = true
 	elif job_kind != "":
 		unreachable[job_cell] = true

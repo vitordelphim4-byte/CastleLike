@@ -543,6 +543,24 @@ Mobs nascem só pelo painel F1 (um por clique, a 12 blocos da câmera). Spawn na
   6 blocos quando alguém chega a menos de 5; prefere quem está parado trabalhando.
 - Teste: `test_mobs.gd` (guerreiro escolhe o soldado; arqueiro atira, recua e morre).
 
+### 13d — Lobos ✅ (feito 2026-11-02)
+- 3 de vida, velocidade 6 (mais rápido que aldeão), 1 de dano. **Matilha**: sozinho fica rodeando a presa
+  a 6 blocos; com outro lobo a até 12, atacam. Escolhe o aldeão **mais longe dos guardas**. Morde e
+  recua 3 blocos (bate e corre). Abaixo de 40% da vida foge e não volta. Também caça cervo e coelho.
+  Malha: entrada "wolf" em `Animal.SPECIES` (sem biomas, nunca nasce como caça).
+- Guarda não marca monstro como inalcançável (alvo anda; tenta de novo na próxima olhada).
+- Teste: `test_mobs.gd` (lobo sozinho rodeia sem morder; dois mordem e recuam; ferido foge).
+
+### Ideias para depois
+- Spawn no escuro (`light_at` ≤ 4) à noite; tochas protegem. Lobos em floresta/taiga.
+- Zumbis batem em portas e paredes; sino de alarme acorda e recolhe os desarmados.
+- Zumbi queima ao sol; esqueletos se escondem em cavernas de dia.
+- Vigia noturna: guarda prioridade 1 fica acordado e dorme de dia.
+- Armas e armaduras de ferro da forja (12b); arcos de madeira no artesão.
+- Ossos e flechas como drop; moral (medo quando alguém cai por perto).
+- Muralhas e ameias: arqueiro no alto ganha alcance.
+- **Pendente:** mobs não vão para o save; guarda dormindo dentro de casa não acorda para lutar.
+
 ---
 
 ## Ordem e dependências
@@ -560,7 +578,9 @@ Depois: monstros/noite perigosa, soldados, arqueiros, biomas.
   estágios variados, 2º estoque com um pouco de cada recurso, coelho/cervo/javali.
 - Painel de debug (F1): tempo (+1h, +6h, +1 dia, meio-dia, meia-noite, 10x), fome (liga/desliga, com fome,
   famintos, alimentar), recursos (infinito, +10 de tudo, esvaziar), plantas (amadurecer, frutas voltam),
-  animais (criar coelho/cervo/javali perto da câmera, matar o mais próximo).
+  animais (criar coelho/cervo/javali perto da câmera, matar o mais próximo), mobs (+ zumbi / esqueleto /
+  esq. arqueiro / lobo a 12 blocos da câmera, matar, passivos, rótulos de IA), combate (morte ferido/permanente,
+  curar todos, 2 soldados + 1 arqueiro, sem guardas).
 - Morro de testes da Fase 9 a oeste (x -40..-25): pedra com veios de ferro, terra e grama por cima,
   túnel aberto (2 de altura) pelo lado leste até uma câmara, e uma caverna fechada com paredes de minério
   mais acima. Painel, linha "Visão": Ir ao morro, Aldeão na câmara (seleciona: contorno + raio-X automático),
