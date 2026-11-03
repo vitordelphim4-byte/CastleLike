@@ -39,6 +39,16 @@ const RESOURCES := {
 		".ooXXBo.........", "oXXoBo..........", "oXBBo...........", ".ooo............"],
 }
 
+# Combat works (work tab header): sword and bow.
+const JOBS := {
+	"soldier": ["", "............ooo.", "...........oSSo.", "..........oSsto.", ".........oSsto..", "........oSsto...",
+		".......oSsto....", "..oo..oSsto.....", "..oyooSsto......", "...oyysto.......", "....oyyo........",
+		"...obooyo.......", "..obbo.oyo......", ".obbo...oo......", ".obo............", "..o............."],
+	"archer": ["", "....ooo.........", "...obbbo........", "....oobbo.......", "...oX.obbo......", "...oX..obo......",
+		"...oX...obo.....", "...oX...obo.....", "...oX...obo.....", "...oX...obo.....", "...oX..obo......",
+		"...oX.obbo......", "....oobbo.......", "...obbbo........", "....ooo........."],
+}
+
 static var _cache := {}
 
 
@@ -146,6 +156,8 @@ static func job(work: String) -> Texture2D:
 		"gather": return resource("berries")
 		"hunt": return resource("meat")
 		"craft": return resource("iron")
+	if work in JOBS:
+		return _paint("job_" + work, JOBS[work], PAL)
 	return resource(work)
 
 

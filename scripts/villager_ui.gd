@@ -5,7 +5,7 @@ extends PanelContainer
 
 const WorkTab := preload("res://scripts/work_tab.gd")
 const SHORT := {"build": "Constr.", "dig": "Miner.", "wood": "Lenha", "farm": "Agric.", "gather": "Colet.",
-	"hunt": "Caça", "craft": "Artes."}
+	"hunt": "Caça", "craft": "Artes.", "soldier": "Sold.", "archer": "Arq."}
 
 var worker: Worker
 var portrait := TextureRect.new()

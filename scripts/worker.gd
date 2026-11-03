@@ -24,6 +24,16 @@ const DOWNED_TIME := 30.0
 const UP_HP := 2  # hp after getting up
 const REGEN_TIME := 30.0  # +1 hp this often while idle or asleep
 const SLOWED := 0.5  # walking speed while a zombie's grab lasts
+# Guards (Soldado / Arqueiro works): drop whatever they do to fight monsters near the colony; with
+# nothing to fight they patrol (their work). Unarmed villagers run to a guard (else the stockpile).
+const COMBAT := ["soldier", "archer"]  # off by default
+const THREAT_RADIUS := 25.0  # a monster this close to a villager or the stockpile is a threat
+const PANIC_RADIUS := 6.0  # unarmed villagers run from monsters this close
+const KEEP_AWAY := 4.0  # archers step back from monsters this close
+const MELEE_REACH := 1.4
+const SWORD_DMG := 2
+const SWORD_TIME := 1.0
+const PATROL_TIME := 3.0  # looking around at each patrol stop
 
 const HUNGRY := 0.3
 const TIRED := 0.25  # sleeps even in the day
@@ -75,6 +85,8 @@ var fear := ""  # what we're running from
 var hp := MAX_HP
 var slowed := 0.0  # seconds left of a zombie's grab
 var _regen := 0.0
+var _watch := 0.0  # seconds to the next look around for monsters
+var kiting := 0.0  # archer: seconds left stepping back (don't stop in bow range meanwhile)
 var bow: MeshInstance3D
 var tree: ResourceNode
 var job_cell := Vector3i.ZERO
@@ -125,7 +137,7 @@ var selected := false:
 
 func _init() -> void:
 	for work in Game.WORKS:
-		priorities[work] = DEFAULT_PRIORITY
+		priorities[work] = 0 if work in COMBAT else DEFAULT_PRIORITY
 
 
 func _ready() -> void:
@@ -224,6 +236,10 @@ func _activity() -> String:
 					var t := Game.farm_tile(job_cell)
 					var crop: String = Farming.CROPS[t.plant].name.to_lower() if t and t.plant else ""
 					return (verb + "colher " if verb else "Colhendo ") + crop
+				"defend":
+					var what: String = prey.display_name().to_lower() if is_instance_valid(prey) else ""
+					return ("Indo enfrentar o " if verb else "Lutando com o ") + what
+				"patrol": return "Patrulhando"
 				"dig": return verb + ("escavar" if verb else "Escavando")
 				"demolish": return verb + ("demolir" if verb else "Demolindo")
 				"craft":
@@ -255,8 +271,14 @@ func _process(delta: float) -> void:
 		if _regen >= REGEN_TIME:
 			_regen = 0.0
 			hp += 1
-	# Hunting: stop walking as soon as the prey is in bow range.
-	if job_kind == "hunt" and state == TO_WORK and not path.is_empty() and _job_valid() and _in_reach():
+	kiting = maxf(0.0, kiting - delta)
+	_watch -= delta
+	if _watch <= 0:
+		_watch = 0.5
+		_watch_mobs()
+	# Hunting / fighting: stop walking as soon as the target is in reach.
+	if job_kind in ["hunt", "defend"] and state == TO_WORK and not path.is_empty() and kiting <= 0 \
+			and _job_valid() and _in_reach():
 		path.clear()
 	if Game.hunger:
 		food = maxf(0.0, food - delta / Game.DAY_LENGTH)
@@ -375,7 +397,7 @@ func _update_state(delta: float) -> void:
 			elif rest >= 1.0 and not Game.is_night():
 				_wake()
 		TO_WORK:
-			if job_kind == "hunt":
+			if job_kind in ["hunt", "defend"]:
 				if not _job_valid():
 					_end_hunt()
 					return
@@ -411,6 +433,13 @@ func _finish_job() -> void:
 		"hunt":
 			Worker.shoot(self, prey)
 			state = TO_WORK  # keep after it until it's down
+			return
+		"defend":
+			if armed() == "archer":
+				Worker.shoot(self, prey)
+			elif _in_reach():
+				prey.hurt(SWORD_DMG, self)
+			state = TO_WORK  # until it's down
 			return
 		"butcher":
 			_set_cargo("meat", Animal.SPECIES[prey.species].meat)
@@ -511,7 +540,7 @@ func _think() -> void:
 		return
 	if not _find_job():
 		return
-	tool.mesh = PeasantParts.mesh(TOOLS[job_kind]) if TOOLS.has(job_kind) else null
+	tool.mesh = _tool_mesh()
 	tool.rotation.y = AXE_TURN if job_kind == "wood" else 0.0
 	if job_kind == "build":
 		var bp: Dictionary = Game.blueprints[job_cell]
@@ -623,7 +652,7 @@ func command(kind: String, target: Variant) -> bool:
 	job_kind = kind
 	forced = true
 	state = IDLE
-	tool.mesh = PeasantParts.mesh(TOOLS[job_kind]) if TOOLS.has(job_kind) else null
+	tool.mesh = _tool_mesh()
 	tool.rotation.y = AXE_TURN if job_kind == "wood" else 0.0
 	_go_to_job()
 	return true
@@ -710,6 +739,102 @@ func armed() -> String:
 	return "archer" if a > 0 else ""
 
 
+func _tool_mesh() -> ArrayMesh:
+	if job_kind in ["defend", "patrol"]:
+		return PeasantParts.mesh("sword") if armed() == "soldier" else null
+	return PeasantParts.mesh(TOOLS[job_kind]) if TOOLS.has(job_kind) else null
+
+
+# Twice a second: guards pick a monster to fight, unarmed villagers run from close ones.
+func _watch_mobs() -> void:
+	var mobs := get_tree().get_nodes_in_group("mobs")
+	if mobs.is_empty() or Game.mobs_passive or not visible:
+		return
+	if armed() == "":
+		if scared <= 0:
+			for m: Mob in mobs:
+				if m.position.distance_to(position) < PANIC_RADIUS:
+					_flee(m)
+					return
+		return
+	if job_kind == "defend" and _job_valid():
+		if armed() == "archer" and prey.position.distance_to(position) < KEEP_AWAY:
+			_step_back()
+		return
+	var m := _pick_threat(mobs)
+	if m:
+		_drop_job()
+		prey = m
+		job_kind = "defend"
+		tool.mesh = _tool_mesh()
+		_go_to_job()
+
+
+# The monster worth fighting: the one closest to an unarmed villager it's after, near us, and
+# with few guards on it already (so guards spread out). null if none is near the colony.
+func _pick_threat(mobs: Array) -> Mob:
+	var people := get_tree().get_nodes_in_group("workers")
+	var best: Mob = null
+	var best_s := INF
+	for m: Mob in mobs:
+		if unreachable.has(m):
+			continue
+		var near := m.position.distance_to(Game.stockpile)
+		for o: Worker in people:
+			near = minf(near, m.position.distance_to(o.position))
+		if near > THREAT_RADIUS:
+			continue
+		var victim := 10.0
+		if Mob._ok(m.target) and m.target is Worker and m.target.armed() == "":
+			victim = m.target.position.distance_to(m.position)
+		var engaged := 0
+		for o: Worker in people:
+			if o != self and o.job_kind == "defend" and o.prey == m:
+				engaged += 1
+		var s := victim + position.distance_to(m.position) + 4.0 * engaged
+		if s < best_s:
+			best_s = s
+			best = m
+	return best
+
+
+# Unarmed: run to the nearest guard (else the stockpile), or just away if that's past the monster.
+func _flee(m: Node3D) -> void:
+	var safe := Game.stockpile
+	var best := INF
+	for g: Worker in get_tree().get_nodes_in_group("workers"):
+		if g.armed() != "" and g.targetable() and g.position.distance_to(position) < best:
+			best = g.position.distance_to(position)
+			safe = g.position
+	var to_safe := safe - position
+	var to_mob := m.position - position
+	if to_safe.length() < 2.0 or to_safe.normalized().dot(to_mob.normalized()) > 0.3:
+		scare(m)
+		return
+	_drop_job()
+	fear = m.display_name().to_lower()
+	path = world.find_path(position, safe)
+	state = MANUAL
+	scared = 2.5
+
+
+# Archer: back off from the monster, toward the nearest soldier if there's one.
+func _step_back() -> void:
+	var away := position - prey.position
+	away.y = 0
+	var to := position + (away.normalized() if away.length() > 0.1 else Vector3.RIGHT) * 5.0
+	var soldier: Worker = null
+	for g: Worker in get_tree().get_nodes_in_group("workers"):
+		if g.armed() == "soldier" and (soldier == null or g.position.distance_to(position) < soldier.position.distance_to(position)):
+			soldier = g
+	if soldier:
+		to = to.lerp(soldier.position, 0.5)
+	to.y = world.top_at(floori(to.x), floori(to.z))
+	path = world.find_path(position, to)
+	state = TO_WORK
+	kiting = 1.0
+
+
 # Loose an arrow from shooter (villager or skeleton) at target; it hits (or lands near) when it
 # arrives.
 static func shoot(shooter: Node3D, target: Node3D, dmg := 1) -> void:
@@ -747,6 +872,10 @@ func _work_time() -> float:
 			World.DEEPSLATE: return WORK_TIME.dig_deep
 	if job_kind == "build":
 		return WORK_TIME.build * load_n
+	if job_kind == "defend":
+		return WORK_TIME.hunt if armed() == "archer" else SWORD_TIME
+	if job_kind == "patrol":
+		return PATROL_TIME
 	return WORK_TIME[job_kind]
 
 
@@ -768,7 +897,7 @@ func _next_ingredient() -> void:
 func _go_to_job() -> void:
 	# Target cells are solid/blocked -> the path ends beside them.
 	var to := _tree_spot() if job_kind in ["wood", "gather"] else _job_target()
-	if job_kind == "hunt" or job_kind == "butcher":
+	if job_kind in ["hunt", "butcher", "defend"]:
 		to = prey.position
 	path = world.find_path(position, to)
 	state = TO_WORK
@@ -922,6 +1051,21 @@ func _find_work(work: String) -> String:
 						job_recipe = id
 			if best_d < INF:
 				Game.stations[job_cell].claimed = true
+		"soldier", "archer":  # nothing to fight: walk the rounds (stockpile, unarmed villagers)
+			if armed() != work:
+				return ""
+			var spots: Array[Vector3] = [Game.stockpile]
+			for o: Worker in get_tree().get_nodes_in_group("workers"):
+				if o != self and o.armed() == "" and o.visible:
+					spots.append(o.position)
+			var p: Vector3 = spots.pick_random() + Vector3(randf_range(-3, 3), 0, randf_range(-3, 3))
+			var c := Vector3i(floori(p.x), 0, floori(p.z))
+			c.y = world.top_at(c.x, c.z)
+			if not world.walkable(c) or unreachable.has(c):
+				return ""
+			job_cell = c
+			kind = "patrol"
+			best_d = 0.0
 		"build":  # building and demolishing are both construction work
 			for c: Vector3i in Game.blueprints:
 				var bp: Dictionary = Game.blueprints[c]
@@ -972,6 +1116,8 @@ func _job_valid() -> bool:
 		"hunt": return is_instance_valid(prey) and prey.state != Animal.DEAD and (forced or prey.marked \
 			or Game.ordered("hunt", Vector2i(floori(prey.position.x), floori(prey.position.z))))
 		"butcher": return is_instance_valid(prey) and prey.state == Animal.DEAD
+		"defend": return armed() != "" and is_instance_valid(prey) and prey.state != Mob.DEAD and not Game.mobs_passive
+		"patrol": return true
 		"sow": return Game.farm_tile(job_cell).get("plant", "x") == ""
 		"harvest":
 			var t := Game.farm_tile(job_cell)
@@ -986,7 +1132,7 @@ func _job_target() -> Vector3:
 		return Pieces.origin(Game.stations[job_cell].item, job_cell) + Vector3(0, 0.5, 0)
 	if job_kind == "build" and Game.blueprints.has(job_cell) and Pieces.size(Game.blueprints[job_cell].item).x > 1:
 		return Pieces.origin(Game.blueprints[job_cell].item, job_cell) + Vector3(0, 0.5, 0)
-	if job_kind == "hunt" or job_kind == "butcher":
+	if job_kind in ["hunt", "butcher", "defend"]:
 		return prey.position + Vector3(0, 0.4, 0)
 	return Vector3(job_cell) + Vector3(0.5, 0.5, 0.5)
 
@@ -1001,6 +1147,10 @@ func _in_reach() -> bool:
 		return _near(t, BOW_RANGE) and absf(t.y - position.y) < 4.0
 	if job_kind == "butcher":
 		return _near(t, 1.4)
+	if job_kind == "defend":
+		if armed() == "archer":
+			return _near(t, BOW_RANGE) and absf(t.y - position.y) < 4.0 and Mob.clear_line(world, position, prey.position)
+		return _near(t, MELEE_REACH)
 	var big: String = Game.stations[job_cell].item if job_kind == "craft" \
 		else (Game.blueprints[job_cell].item if job_kind == "build" and Game.blueprints.has(job_cell) else "")
 	if big and Pieces.size(big).x > 1:  # stand anywhere next to the footprint
@@ -1018,7 +1168,7 @@ func _near(p: Vector3, r := 1.6) -> bool:
 func _fail() -> void:
 	if job_kind in ["wood", "gather"] and tree:
 		unreachable[tree] = true
-	elif job_kind in ["hunt", "butcher"] and is_instance_valid(prey):
+	elif job_kind in ["hunt", "butcher", "defend"] and is_instance_valid(prey):
 		unreachable[prey] = true
 	elif job_kind != "":
 		unreachable[job_cell] = true
@@ -1142,7 +1292,7 @@ func _animate(delta: float) -> void:
 	_place_cargo(load_kind)
 	cargo.visible = loaded and state != WORKING
 	tool.visible = tool.mesh != null and job_kind != "" and (not loaded or state == WORKING)
-	bow.visible = job_kind == "hunt" and not loaded
+	bow.visible = (job_kind == "hunt" or (job_kind in ["defend", "patrol"] and armed() == "archer")) and not loaded
 
 
 # Tool work: slow wind-up, fast strike, chips fly at the moment of impact.
@@ -1165,7 +1315,12 @@ func _work_pose(pose: Dictionary) -> void:
 			pose.arm_r = Vector3(lerpf(1.0, 2.2, t), 0, -0.1)
 			pose.body = Vector3(-0.15, 0, 0)
 			pose.head = Vector3(0.25, 0, 0)
-		"hunt":  # bow up in the left hand, right hand drawing the string back
+		"defend" when armed() == "soldier":  # sword: raised over the right shoulder, cut down
+			var t := _strike(1.0 / SWORD_TIME)
+			pose.arm_l = Vector3(0.6, 0, 0.15)
+			pose.arm_r = Vector3(lerpf(0.6, 2.8, t), 0, -0.15)
+			pose.body = Vector3(lerpf(-0.2, 0.1, t), lerpf(0.2, -0.2, t), 0)
+		"hunt", "defend":  # bow up in the left hand, right hand drawing the string back
 			var draw := clampf(1.0 - timer / WORK_TIME.hunt, 0.0, 1.0)
 			pose.arm_l = Vector3(1.55, 0, 0.15)
 			pose.arm_r = Vector3(1.5, 0, lerpf(-0.1, 0.55, draw))
@@ -1203,7 +1358,7 @@ func _hit() -> void:
 				col = World.COLORS[World.DIRT]
 		"build", "craft", "demolish":
 			col = Color(0.75, 0.72, 0.68)  # dust
-		"gather", "sow", "harvest", "hunt", "butcher":
+		"gather", "sow", "harvest", "hunt", "butcher", "defend", "patrol":
 			return
 	chips.color = col
 	chips.global_position = _job_target()

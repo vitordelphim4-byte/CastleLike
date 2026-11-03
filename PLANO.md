@@ -523,6 +523,19 @@ Mobs nascem só pelo painel F1 (um por clique, a 12 blocos da câmera). Spawn na
   "Combate" (morte ferido/permanente, curar todos, 2 soldados + 1 arqueiro, sem guardas).
 - Teste: `test_mobs.gd`.
 
+### 13b — Soldado e Arqueiro ✅ (feito 2026-11-02)
+- Duas colunas novas na aba Trabalho (ícones espada e arco), **desligadas por padrão**. Arma grátis por
+  enquanto (forja na 12b). Quem tem as duas usa a de prioridade melhor (empate: soldado).
+- A cada 0,5 s o guarda olha: monstro a até 25 de algum aldeão ou do estoque → larga o que faz e pega
+  o trabalho "defend" (como o draft do RimWorld, passa por cima das prioridades). Escolhe o monstro mais
+  perto de um desarmado que ele persegue, perto de si e com menos guardas já nele (+4 por guarda).
+- Soldado: corpo a corpo (1,4), 2 de dano por segundo; o golpe provoca o monstro. Arqueiro: atira de até
+  10 com linha livre (`Mob.clear_line`); monstro a menos de 4 → recua 5 blocos, puxando para o soldado.
+- Sem monstro: patrulha (é o trabalho dele, na prioridade dele): estoque e aldeões desarmados, 3 s por
+  parada. Desarmados com monstro a menos de 6 correm até o guarda mais perto (ou o estoque; se o caminho
+  passa pelo monstro, fogem para longe).
+- Teste: `test_mobs.gd` (soldado + arqueiro matam o zumbi; o camponês continua de pé).
+
 ---
 
 ## Ordem e dependências

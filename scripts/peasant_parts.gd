@@ -35,6 +35,7 @@ static func mesh(part: String, look := {}) -> ArrayMesh:
 			"axe": _cache[key] = axe()
 			"pickaxe": _cache[key] = pickaxe()
 			"hammer": _cache[key] = hammer()
+			"sword": _cache[key] = sword()
 			"cargo_wood": _cache[key] = cargo_wood()
 			"cargo_stone": _cache[key] = cargo_stone()
 			"cargo_iron_ore": _cache[key] = cargo_lump(Color(0.5, 0.5, 0.52), Color(0.78, 0.45, 0.26))
@@ -160,6 +161,14 @@ static func hammer() -> ArrayMesh:
 	var v := {}
 	VoxelMesh.fill(v, Vector3i(0, 0, 0), Vector3i(1, 10, 1), WOOD)
 	VoxelMesh.fill(v, Vector3i(-1, 9, -1), Vector3i(3, 2, 3), IRON)
+	return VoxelMesh.build(v, S, Vector3(-0.5, -2, -0.5))
+
+
+static func sword() -> ArrayMesh:
+	var v := {}
+	VoxelMesh.fill(v, Vector3i(0, 0, 0), Vector3i(1, 3, 1), WOOD)  # grip
+	VoxelMesh.fill(v, Vector3i(-1, 3, 0), Vector3i(3, 1, 1), GOLD)  # guard
+	VoxelMesh.fill(v, Vector3i(0, 4, 0), Vector3i(1, 9, 1), IRON.lightened(0.2))  # blade
 	return VoxelMesh.build(v, S, Vector3(-0.5, -2, -0.5))
 
 

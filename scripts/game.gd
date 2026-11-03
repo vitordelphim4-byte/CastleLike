@@ -9,7 +9,7 @@ signal mode_changed
 # Work types, in work-tab column order (= tie-break order at equal priority, like RimWorld).
 # To add a job (soldier, archer, hunter...): add it here and teach Worker._find_work() to find its jobs.
 const WORKS := {"build": "Construção", "dig": "Mineração", "wood": "Lenhador", "farm": "Agricultor", "gather": "Coletor",
-	"hunt": "Caçador", "craft": "Artesão"}
+	"hunt": "Caçador", "craft": "Artesão", "soldier": "Soldado", "archer": "Arqueiro"}
 # Area kinds the player marks; "stock" = stockpile zone (the others are standing orders).
 const ORDER_NAMES := {"wood": "Cortar árvores", "gather": "Colher frutas", "hunt": "Caçar", "dig": "Escavar",
 	"stock": "Estoque", "farm": "Plantação"}
